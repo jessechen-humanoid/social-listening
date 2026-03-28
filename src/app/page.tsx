@@ -309,6 +309,9 @@ export default function Home() {
               <div className="flex items-center justify-between">
                 <div>
                   <span className="text-sm font-medium" style={{ color: '#1a1a1a' }}>
+                    {(task.config as AnalysisConfig)?.projectName
+                      ? `${(task.config as AnalysisConfig).projectName}：`
+                      : ''}
                     {(task.config as AnalysisConfig)?.xAxis?.name || '好感度'} ×{' '}
                     {(task.config as AnalysisConfig)?.yAxis?.name || '情緒強度'}
                   </span>
