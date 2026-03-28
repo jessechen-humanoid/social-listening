@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.zeabur.app/template.json",
+  "services": [
+    {
+      "name": "social-listening",
+      "template": "NEXTJS",
+      "env": {
+        "DATABASE_URL": "${POSTGRES_CONNECTION_STRING}",
+        "OPENAI_API_KEY": "${OPENAI_API_KEY}"
+      }
+    },
+    {
+      "name": "postgres",
+      "template": "POSTGRESQL"
+    }
+  ]
+}
