@@ -7,7 +7,6 @@ export function exportReportCSV(results: TaskResult[], hasCondition: boolean, pr
     ...(hasCondition ? ['condition_result'] : []),
     'x_score',
     'y_score',
-    'reasoning',
     'source_file',
     'engagement',
   ];
@@ -19,7 +18,6 @@ export function exportReportCSV(results: TaskResult[], hasCondition: boolean, pr
       ...(hasCondition ? [r.condition_result === null ? '' : String(r.condition_result)] : []),
       r.x_score !== null ? String(r.x_score) : '',
       r.y_score !== null ? String(r.y_score) : '',
-      escapeCsv(r.reasoning || ''),
       escapeCsv(r.source_file || ''),
       r.engagement_value !== null ? String(r.engagement_value) : '',
     ]);

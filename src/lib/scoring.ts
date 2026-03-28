@@ -14,7 +14,6 @@ interface ScoringResult {
   condition: boolean | null;
   x_score: number;
   y_score: number;
-  reasoning: string;
 }
 
 function buildPrompt(config: ScoringConfig, content: string): string {
@@ -46,7 +45,6 @@ ${conditionInstruction}
 - 不要只給整數分數，要根據內容的細微差異給出不同的小數分數
 - 仔細考慮每則內容的語氣、用詞、情感強度來區分差異
 - 善用 0.0-10.0 的完整範圍，不要集中在某幾個分數
-- reasoning 請用繁體中文簡短說明你的判斷依據
 
 ## 待分析內容
 
@@ -56,8 +54,8 @@ ${content}
 
 請嚴格回傳以下 JSON 格式，不要包含任何其他文字：
 ${hasCondition
-    ? '{"condition": true/false, "x_score": 0.0, "y_score": 0.0, "reasoning": "..."}'
-    : '{"x_score": 0.0, "y_score": 0.0, "reasoning": "..."}'
+    ? '{"condition": true/false, "x_score": 0.0, "y_score": 0.0}'
+    : '{"x_score": 0.0, "y_score": 0.0}'
   }`;
 }
 
@@ -78,7 +76,6 @@ async function scoreContent(config: ScoringConfig, content: string): Promise<Sco
     condition: parsed.condition ?? null,
     x_score: Math.round(Number(parsed.x_score) * 10) / 10,
     y_score: Math.round(Number(parsed.y_score) * 10) / 10,
-    reasoning: parsed.reasoning || '',
   };
 }
 
@@ -119,9 +116,9 @@ export async function processTask(taskId: string) {
             await query(
               `UPDATE task_results SET
                 condition_result = $1, x_score = $2, y_score = $3,
-                reasoning = $4, status = 'completed', created_at = NOW()
-               WHERE result_id = $5`,
-              [result.condition, result.x_score, result.y_score, result.reasoning, row.result_id]
+                status = 'completed', created_at = NOW()
+               WHERE result_id = $4`,
+              [result.condition, result.x_score, result.y_score, row.result_id]
             );
 
             await query(
@@ -141,8 +138,8 @@ export async function processTask(taskId: string) {
 
         if (lastError) {
           await query(
-            "UPDATE task_results SET status = 'error', reasoning = $1 WHERE result_id = $2",
-            [lastError.message, row.result_id]
+            "UPDATE task_results SET status = 'error' WHERE result_id = $1",
+            [row.result_id]
           );
           await query(
             'UPDATE tasks SET completed_items = completed_items + 1, updated_at = NOW() WHERE task_id = $1',

@@ -20,14 +20,11 @@ const MODELS = [
 ];
 
 const DOT_COLORS = [
-  { value: '#2d2d2d', label: '炭黑' },
-  { value: '#4a7c59', label: '森綠' },
-  { value: '#5c6b8a', label: '石藍' },
-  { value: '#8a5c5c', label: '玫粉' },
-  { value: '#7a6e4e', label: '橄欖' },
-  { value: '#6b5c8a', label: '霧紫' },
-  { value: '#5c8a8a', label: '青碧' },
-  { value: '#8a7a5c', label: '暖卡' },
+  { value: '#404040', label: '深灰' },
+  { value: '#E85D3A', label: '橘紅' },
+  { value: '#F5A0A0', label: '粉紅' },
+  { value: '#1A8C8C', label: '深藍綠' },
+  { value: '#00CED1', label: '藍綠' },
 ];
 
 export default function AnalysisConfigPanel({ config, onChange, totalRows }: AnalysisConfigProps) {
@@ -152,23 +149,6 @@ export default function AnalysisConfigPanel({ config, onChange, totalRows }: Ana
         </div>
       </div>
 
-      {/* Row count slider */}
-      {totalRows > 0 && (
-        <div>
-          <label className="text-sm font-medium block mb-2" style={{ color: '#6b6b6b' }}>
-            分析筆數：{effectiveMaxRows} / {totalRows}
-          </label>
-          <input
-            type="range"
-            min={1}
-            max={totalRows}
-            value={effectiveMaxRows}
-            onChange={e => setField('maxRows', parseInt(e.target.value))}
-            className="w-full accent-[#2d2d2d]"
-          />
-        </div>
-      )}
-
       {/* Model selection */}
       <div>
         <label className="text-sm font-medium block mb-2" style={{ color: '#6b6b6b' }}>AI 模型</label>
@@ -183,6 +163,23 @@ export default function AnalysisConfigPanel({ config, onChange, totalRows }: Ana
           ))}
         </select>
       </div>
+
+      {/* Row count slider — positioned just before "start analysis" button */}
+      {totalRows > 0 && (
+        <div>
+          <label className="text-sm font-medium block mb-2" style={{ color: '#6b6b6b' }}>
+            分析筆數：{effectiveMaxRows} / {totalRows}
+          </label>
+          <input
+            type="range"
+            min={1}
+            max={totalRows}
+            value={effectiveMaxRows}
+            onChange={e => setField('maxRows', parseInt(e.target.value))}
+            className="w-full accent-[#404040]"
+          />
+        </div>
+      )}
     </div>
   );
 }

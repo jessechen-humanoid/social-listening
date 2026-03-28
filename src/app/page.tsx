@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import FileUpload from '@/components/FileUpload';
 import AnalysisConfigPanel from '@/components/AnalysisConfig';
-import ScatterPlot, { exportScatterPlotPNG } from '@/components/ScatterPlot';
+import ScatterPlot, { exportScatterPlotPNG, computeQuadrantCounts } from '@/components/ScatterPlot';
 import ProgressBar from '@/components/ProgressBar';
 import { exportReportCSV } from '@/lib/export-report';
 import { getBrowserUuid } from '@/lib/browser-uuid';
@@ -17,7 +17,7 @@ const DEFAULT_CONFIG: AnalysisConfig = {
   xAxis: { name: '好感度', zeroDescription: '對品牌完全負面', tenDescription: '對品牌高度正面' },
   yAxis: { name: '情緒強度', zeroDescription: '平淡無情緒', tenDescription: '情緒非常激烈' },
   model: 'gpt-4o',
-  dotColor: '#2d2d2d',
+  dotColor: '#404040',
   maxRows: 0,
 };
 
@@ -235,14 +235,37 @@ export default function Home() {
             </div>
           )}
 
-          <ScatterPlot
-            results={results}
-            xAxisName={config.xAxis.name}
-            yAxisName={config.yAxis.name}
-            conditionFilterEnabled={config.conditionFilterEnabled}
-            conditionText={config.conditionText}
-            dotColor={config.dotColor}
-          />
+          {/* Quadrant labels - above chart */}
+          {(() => {
+            const visible = results.filter(r => {
+              if (r.status !== 'completed' || r.x_score === null || r.y_score === null) return false;
+              if (config.conditionFilterEnabled && config.conditionText) return r.condition_result === true;
+              return true;
+            });
+            const counts = computeQuadrantCounts(visible.map(r => ({ x: r.x_score!, y: r.y_score! })));
+            const total = visible.length || 1;
+            const pct = counts.map(c => Math.round((c / total) * 100));
+            return (
+              <>
+                <div className="flex justify-between text-sm" style={{ color: '#6b6b6b' }}>
+                  <span>超級黑粉 {pct[0]}%</span>
+                  <span>超級鐵粉 {pct[1]}%</span>
+                </div>
+                <ScatterPlot
+                  results={results}
+                  xAxisName={config.xAxis.name}
+                  yAxisName={config.yAxis.name}
+                  conditionFilterEnabled={config.conditionFilterEnabled}
+                  conditionText={config.conditionText}
+                  dotColor={config.dotColor}
+                />
+                <div className="flex justify-between text-sm" style={{ color: '#6b6b6b' }}>
+                  <span>理性黑粉 {pct[2]}%</span>
+                  <span>理性粉絲 {pct[3]}%</span>
+                </div>
+              </>
+            );
+          })()}
 
           {/* Export buttons */}
           <div className="flex gap-3">

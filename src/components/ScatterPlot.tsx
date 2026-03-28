@@ -21,7 +21,7 @@ const QUADRANT_LABELS = [
   { name: '理性粉絲', x: 1, y: 0 },   // lower-right
 ];
 
-function computeQuadrantCounts(points: { x: number; y: number }[]) {
+export function computeQuadrantCounts(points: { x: number; y: number }[]) {
   const counts = [0, 0, 0, 0]; // UL, UR, LL, LR
   for (const p of points) {
     const right = p.x >= 5.0;
@@ -57,7 +57,7 @@ export default function ScatterPlot({
   yAxisName,
   conditionFilterEnabled,
   conditionText,
-  dotColor = '#2d2d2d',
+  dotColor = '#404040',
   exportMode = false,
 }: ScatterPlotProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -154,23 +154,7 @@ export default function ScatterPlot({
       return { x: jx, y: jy, radius, engagement: eng };
     });
 
-    // Quadrant counts & percentages
-    const quadCounts = computeQuadrantCounts(points);
-    const total = points.length || 1;
-    ctx.font = '13px Arial, sans-serif';
-    ctx.textAlign = 'center';
-
-    for (const q of QUADRANT_LABELS) {
-      const idx = q.y === 1 ? (q.x === 0 ? 0 : 1) : (q.x === 0 ? 2 : 3);
-      const pct = Math.round((quadCounts[idx] / total) * 100);
-      const px = q.x === 0 ? scaleX(2.5) : scaleX(7.5);
-      const py = q.y === 1 ? scaleY(7.5) : scaleY(2.5);
-      ctx.fillStyle = textColor;
-      ctx.globalAlpha = 0.5;
-      ctx.fillText(q.name, px, py);
-      ctx.fillText(`${pct}%`, px, py + 18);
-      ctx.globalAlpha = 1;
-    }
+    // Quadrant labels are rendered outside the chart in page.tsx, not inside the canvas
 
     // Data points
     for (const p of points) {
@@ -242,11 +226,11 @@ export function exportScatterPlotPNG(
   yAxisName: string,
   conditionFilterEnabled: boolean,
   conditionText: string,
-  dotColor: string = '#2d2d2d',
+  dotColor: string = '#404040',
   projectName: string = '',
 ) {
-  const width = 1200;
-  const height = 800;
+  const width = 1000;
+  const height = 1000;
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
@@ -340,23 +324,24 @@ export function exportScatterPlotPNG(
     return { x: jx, y: jy, radius, engagement: eng };
   });
 
-  // Quadrant labels
+  // Quadrant labels — rendered outside chart area (top and bottom)
   const quadCounts = computeQuadrantCounts(points);
   const total = points.length || 1;
-  ctx.font = '16px Arial, sans-serif';
-  ctx.textAlign = 'center';
-
-  for (const q of QUADRANT_LABELS) {
-    const idx = q.y === 1 ? (q.x === 0 ? 0 : 1) : (q.x === 0 ? 2 : 3);
-    const pct = Math.round((quadCounts[idx] / total) * 100);
-    const px = q.x === 0 ? scaleX(2.5) : scaleX(7.5);
-    const py = q.y === 1 ? scaleY(7.5) : scaleY(2.5);
-    ctx.fillStyle = textColor;
-    ctx.globalAlpha = 0.5;
-    ctx.fillText(q.name, px, py);
-    ctx.fillText(`${pct}%`, px, py + 22);
-    ctx.globalAlpha = 1;
-  }
+  const pcts = quadCounts.map(c => Math.round((c / total) * 100));
+  ctx.fillStyle = textColor;
+  ctx.font = '14px Arial, sans-serif';
+  ctx.globalAlpha = 0.7;
+  // Top row: upper-left (超級黑粉) and upper-right (超級鐵粉)
+  ctx.textAlign = 'left';
+  ctx.fillText(`超級黑粉 ${pcts[0]}%`, margin.left, margin.top - 14);
+  ctx.textAlign = 'right';
+  ctx.fillText(`超級鐵粉 ${pcts[1]}%`, width - margin.right, margin.top - 14);
+  // Bottom row: lower-left (理性黑粉) and lower-right (理性粉絲)
+  ctx.textAlign = 'left';
+  ctx.fillText(`理性黑粉 ${pcts[2]}%`, margin.left, height - margin.bottom + 40);
+  ctx.textAlign = 'right';
+  ctx.fillText(`理性粉絲 ${pcts[3]}%`, width - margin.right, height - margin.bottom + 40);
+  ctx.globalAlpha = 1;
 
   // Data points
   for (const p of points) {
