@@ -332,6 +332,18 @@ export default function Home() {
                   <span className="text-xs" style={{ color: '#c0c0c0' }}>
                     {new Date(task.created_at).toLocaleDateString('zh-TW')}
                   </span>
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      if (!window.confirm('確定要移除這筆分析紀錄嗎？此操作無法復原。')) return;
+                      await fetch(`/api/tasks/${task.task_id}`, { method: 'DELETE' });
+                      fetchHistory();
+                    }}
+                    className="text-xs px-2 py-1 rounded-lg transition"
+                    style={{ color: '#c75c5c' }}
+                  >
+                    移除
+                  </button>
                 </div>
               </div>
             </div>
