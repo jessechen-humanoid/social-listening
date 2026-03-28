@@ -11,11 +11,14 @@ import type { UploadedFile, AnalysisConfig, TaskResult, TaskProgress } from '@/l
 
 const DEFAULT_CONFIG: AnalysisConfig = {
   mode: 'brand',
+  projectName: '',
   conditionText: '',
   conditionFilterEnabled: false,
   xAxis: { name: '好感度', zeroDescription: '對品牌完全負面', tenDescription: '對品牌高度正面' },
   yAxis: { name: '情緒強度', zeroDescription: '平淡無情緒', tenDescription: '情緒非常激烈' },
   model: 'gpt-4o',
+  dotColor: '#2d2d2d',
+  maxRows: 0,
 };
 
 type ViewState = 'config' | 'processing' | 'results' | 'history';
@@ -186,7 +189,7 @@ export default function Home() {
       {/* Config view */}
       {view === 'config' && (
         <div className="space-y-6">
-          <AnalysisConfigPanel config={config} onChange={setConfig} />
+          <AnalysisConfigPanel config={config} onChange={setConfig} totalRows={files.reduce((sum, f) => sum + f.rowCount, 0)} />
           <FileUpload files={files} onChange={setFiles} />
 
           <button
@@ -238,6 +241,7 @@ export default function Home() {
             yAxisName={config.yAxis.name}
             conditionFilterEnabled={config.conditionFilterEnabled}
             conditionText={config.conditionText}
+            dotColor={config.dotColor}
           />
 
           {/* Export buttons */}
@@ -245,7 +249,8 @@ export default function Home() {
             <button
               onClick={() => exportScatterPlotPNG(
                 results, config.xAxis.name, config.yAxis.name,
-                config.conditionFilterEnabled, config.conditionText
+                config.conditionFilterEnabled, config.conditionText,
+                config.dotColor, config.projectName
               )}
               className="px-4 py-2 rounded-lg text-sm font-medium transition"
               style={{ backgroundColor: '#1a1a1a', color: '#ffffff' }}
@@ -253,7 +258,7 @@ export default function Home() {
               下載散佈圖
             </button>
             <button
-              onClick={() => exportReportCSV(results, !!config.conditionText)}
+              onClick={() => exportReportCSV(results, !!config.conditionText, config.projectName)}
               className="px-4 py-2 rounded-lg text-sm font-medium transition"
               style={{ backgroundColor: '#f5f5f3', color: '#1a1a1a' }}
             >

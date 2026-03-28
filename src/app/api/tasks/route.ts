@@ -34,15 +34,21 @@ export async function POST(request: Request) {
     );
 
     // Create file records and result records
+    const maxRows = config.maxRows > 0 ? config.maxRows : Infinity;
+
     for (const file of files) {
+      if (totalItems >= maxRows) break;
+
       const fileId = uuidv4();
+      const rowsToProcess = Math.min(file.data.length, maxRows - totalItems);
+
       await query(
         `INSERT INTO task_files (file_id, task_id, filename, column_mapping, row_count)
          VALUES ($1, $2, $3, $4, $5)`,
-        [fileId, taskId, file.filename, JSON.stringify(file.columnMapping), file.data.length]
+        [fileId, taskId, file.filename, JSON.stringify(file.columnMapping), rowsToProcess]
       );
 
-      for (let i = 0; i < file.data.length; i++) {
+      for (let i = 0; i < rowsToProcess; i++) {
         const row = file.data[i];
         const resultId = uuidv4();
         const contentText = String(row[file.contentColumn] || '');
@@ -57,7 +63,7 @@ export async function POST(request: Request) {
         );
       }
 
-      totalItems += file.data.length;
+      totalItems += rowsToProcess;
     }
 
     // Update total_items

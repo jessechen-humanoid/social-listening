@@ -19,7 +19,14 @@ export async function GET(
       [taskId]
     );
 
-    return Response.json({ results: result.rows });
+    const rows = result.rows.map(row => ({
+      ...row,
+      x_score: row.x_score !== null ? parseFloat(row.x_score) : null,
+      y_score: row.y_score !== null ? parseFloat(row.y_score) : null,
+      engagement_value: row.engagement_value !== null ? parseFloat(row.engagement_value) : null,
+    }));
+
+    return Response.json({ results: rows });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return Response.json({ error: message }, { status: 500 });

@@ -11,11 +11,14 @@ export interface UploadedFile {
 
 export interface AnalysisConfig {
   mode: 'brand' | 'custom';
+  projectName: string;
   conditionText: string;
   conditionFilterEnabled: boolean;
   xAxis: AxisConfig;
   yAxis: AxisConfig;
   model: string;
+  dotColor: string;
+  maxRows: number;
 }
 
 export interface AxisConfig {
@@ -36,6 +39,7 @@ export interface TaskResult {
   reasoning: string | null;
   engagement_value: number | null;
   status: string;
+  source_file?: string;
 }
 
 export interface TaskProgress {

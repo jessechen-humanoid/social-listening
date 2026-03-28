@@ -1,6 +1,6 @@
 import type { TaskResult } from './types';
 
-export function exportReportCSV(results: TaskResult[], hasCondition: boolean) {
+export function exportReportCSV(results: TaskResult[], hasCondition: boolean, projectName: string = '') {
   const BOM = '\uFEFF';
   const headers = [
     'content',
@@ -20,7 +20,7 @@ export function exportReportCSV(results: TaskResult[], hasCondition: boolean) {
       r.x_score !== null ? String(r.x_score) : '',
       r.y_score !== null ? String(r.y_score) : '',
       escapeCsv(r.reasoning || ''),
-      escapeCsv((r as TaskResult & { source_file?: string }).source_file || ''),
+      escapeCsv(r.source_file || ''),
       r.engagement_value !== null ? String(r.engagement_value) : '',
     ]);
 
@@ -28,7 +28,7 @@ export function exportReportCSV(results: TaskResult[], hasCondition: boolean) {
 
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
   const link = document.createElement('a');
-  link.download = '輿情分析報表.csv';
+  link.download = projectName ? `${projectName}_輿情分析報表.csv` : '輿情分析報表.csv';
   link.href = URL.createObjectURL(blob);
   link.click();
   URL.revokeObjectURL(link.href);

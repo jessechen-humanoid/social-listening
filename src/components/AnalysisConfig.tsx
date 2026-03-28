@@ -5,6 +5,7 @@ import type { AnalysisConfig } from '@/lib/types';
 interface AnalysisConfigProps {
   config: AnalysisConfig;
   onChange: (config: AnalysisConfig) => void;
+  totalRows: number;
 }
 
 const BRAND_PRESET = {
@@ -18,7 +19,18 @@ const MODELS = [
   { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo' },
 ];
 
-export default function AnalysisConfigPanel({ config, onChange }: AnalysisConfigProps) {
+const DOT_COLORS = [
+  { value: '#2d2d2d', label: '炭黑' },
+  { value: '#4a7c59', label: '森綠' },
+  { value: '#5c6b8a', label: '石藍' },
+  { value: '#8a5c5c', label: '玫粉' },
+  { value: '#7a6e4e', label: '橄欖' },
+  { value: '#6b5c8a', label: '霧紫' },
+  { value: '#5c8a8a', label: '青碧' },
+  { value: '#8a7a5c', label: '暖卡' },
+];
+
+export default function AnalysisConfigPanel({ config, onChange, totalRows }: AnalysisConfigProps) {
   const isBrand = config.mode === 'brand';
 
   const setField = <K extends keyof AnalysisConfig>(key: K, value: AnalysisConfig[K]) => {
@@ -33,8 +45,23 @@ export default function AnalysisConfigPanel({ config, onChange }: AnalysisConfig
     }
   };
 
+  const effectiveMaxRows = config.maxRows > 0 ? config.maxRows : totalRows;
+
   return (
     <div className="space-y-5">
+      {/* Project name */}
+      <div>
+        <label className="text-sm font-medium block mb-2" style={{ color: '#6b6b6b' }}>專案名稱（選填）</label>
+        <input
+          type="text"
+          value={config.projectName}
+          onChange={e => setField('projectName', e.target.value)}
+          placeholder="例如：McDonald's Q1 2026"
+          className="w-full rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#2d2d2d] focus:outline-none"
+          style={{ border: '1px solid #e8e8e5', backgroundColor: '#ffffff', color: '#1a1a1a' }}
+        />
+      </div>
+
       {/* Mode toggle */}
       <div>
         <label className="text-sm font-medium block mb-2" style={{ color: '#6b6b6b' }}>分析模式</label>
@@ -104,6 +131,43 @@ export default function AnalysisConfigPanel({ config, onChange }: AnalysisConfig
         locked={isBrand}
         onChange={axis => setField('yAxis', axis)}
       />
+
+      {/* Dot color selector */}
+      <div>
+        <label className="text-sm font-medium block mb-2" style={{ color: '#6b6b6b' }}>散佈圖顏色</label>
+        <div className="flex gap-3 flex-wrap">
+          {DOT_COLORS.map(c => (
+            <button
+              key={c.value}
+              onClick={() => setField('dotColor', c.value)}
+              className="w-8 h-8 rounded-full transition"
+              title={c.label}
+              style={{
+                backgroundColor: c.value,
+                border: config.dotColor === c.value ? '3px solid #1a1a1a' : '3px solid transparent',
+                outline: config.dotColor === c.value ? '2px solid #e8e8e5' : 'none',
+              }}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* Row count slider */}
+      {totalRows > 0 && (
+        <div>
+          <label className="text-sm font-medium block mb-2" style={{ color: '#6b6b6b' }}>
+            分析筆數：{effectiveMaxRows} / {totalRows}
+          </label>
+          <input
+            type="range"
+            min={1}
+            max={totalRows}
+            value={effectiveMaxRows}
+            onChange={e => setField('maxRows', parseInt(e.target.value))}
+            className="w-full accent-[#2d2d2d]"
+          />
+        </div>
+      )}
 
       {/* Model selection */}
       <div>

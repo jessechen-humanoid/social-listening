@@ -10,14 +10,15 @@ interface ScatterPlotProps {
   yAxisName: string;
   conditionFilterEnabled: boolean;
   conditionText: string;
+  dotColor?: string;
   exportMode?: boolean;
 }
 
 const QUADRANT_LABELS = [
-  { name: '超級批評者', x: 0, y: 1 },   // upper-left
-  { name: '超級粉絲', x: 1, y: 1 },     // upper-right
-  { name: '沈默批評者', x: 0, y: 0 },   // lower-left
-  { name: '沈默支持者', x: 1, y: 0 },   // lower-right
+  { name: '超級黑粉', x: 0, y: 1 },   // upper-left
+  { name: '超級鐵粉', x: 1, y: 1 },   // upper-right
+  { name: '理性黑粉', x: 0, y: 0 },   // lower-left
+  { name: '理性粉絲', x: 1, y: 0 },   // lower-right
 ];
 
 function computeQuadrantCounts(points: { x: number; y: number }[]) {
@@ -56,6 +57,7 @@ export default function ScatterPlot({
   yAxisName,
   conditionFilterEnabled,
   conditionText,
+  dotColor = '#2d2d2d',
   exportMode = false,
 }: ScatterPlotProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -73,7 +75,7 @@ export default function ScatterPlot({
     const textColor = exportMode ? '#1a1a1a' : '#1a1a1a';
     const gridColor = exportMode ? '#e8e8e5' : '#f0f0ed';
     const quadLineColor = exportMode ? '#c0c0c0' : '#e8e8e5';
-    const dotColor = exportMode ? '#2d2d2d' : '#2d2d2d';
+    const pointColor = dotColor;
 
     const margin = { top: 40, right: 40, bottom: 60, left: 60 };
     const plotW = width - margin.left - margin.right;
@@ -174,7 +176,7 @@ export default function ScatterPlot({
     for (const p of points) {
       ctx.beginPath();
       ctx.arc(scaleX(p.x), scaleY(p.y), p.radius, 0, Math.PI * 2);
-      ctx.fillStyle = dotColor;
+      ctx.fillStyle = pointColor;
       ctx.globalAlpha = 0.35;
       ctx.fill();
       ctx.globalAlpha = 1;
@@ -203,7 +205,7 @@ export default function ScatterPlot({
       ctx.textAlign = 'left';
       ctx.fillText(`(${cx}, ${cy})`, sx + 14, sy - 6);
     }
-  }, [filteredResults, xAxisName, yAxisName, exportMode]);
+  }, [filteredResults, xAxisName, yAxisName, dotColor, exportMode]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -240,6 +242,8 @@ export function exportScatterPlotPNG(
   yAxisName: string,
   conditionFilterEnabled: boolean,
   conditionText: string,
+  dotColor: string = '#2d2d2d',
+  projectName: string = '',
 ) {
   const width = 1200;
   const height = 800;
@@ -254,7 +258,7 @@ export function exportScatterPlotPNG(
   const textColor = '#1a1a1a';
   const gridColor = '#e8e8e5';
   const quadLineColor = '#c0c0c0';
-  const dotColor = '#2d2d2d';
+  const pointColor = dotColor;
 
   const margin = { top: 40, right: 40, bottom: 60, left: 60 };
   const plotW = width - margin.left - margin.right;
@@ -358,7 +362,7 @@ export function exportScatterPlotPNG(
   for (const p of points) {
     ctx.beginPath();
     ctx.arc(scaleX(p.x), scaleY(p.y), p.radius, 0, Math.PI * 2);
-    ctx.fillStyle = dotColor;
+    ctx.fillStyle = pointColor;
     ctx.globalAlpha = 0.35;
     ctx.fill();
     ctx.globalAlpha = 1;
@@ -390,7 +394,7 @@ export function exportScatterPlotPNG(
 
   // Download
   const link = document.createElement('a');
-  link.download = '輿情分析散佈圖.png';
+  link.download = projectName ? `${projectName}_輿情分析散佈圖.png` : '輿情分析散佈圖.png';
   link.href = canvas.toDataURL('image/png');
   link.click();
 }
