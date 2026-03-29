@@ -228,6 +228,7 @@ export function exportScatterPlotPNG(
   conditionText: string,
   dotColor: string = '#404040',
   projectName: string = '',
+  mode: 'brand' | 'custom' = 'brand',
 ) {
   const width = 1000;
   const height = 1000;
@@ -331,16 +332,16 @@ export function exportScatterPlotPNG(
   ctx.fillStyle = textColor;
   ctx.font = '14px Arial, sans-serif';
   ctx.globalAlpha = 0.7;
-  // Top row: upper-left (超級黑粉) and upper-right (超級鐵粉)
+  // Top row: upper-left and upper-right
   ctx.textAlign = 'left';
-  ctx.fillText(`超級黑粉 ${pcts[0]}%`, margin.left, margin.top - 14);
+  ctx.fillText(mode === 'brand' ? `超級黑粉 ${pcts[0]}%` : `${pcts[0]}%`, margin.left, margin.top - 14);
   ctx.textAlign = 'right';
-  ctx.fillText(`超級鐵粉 ${pcts[1]}%`, width - margin.right, margin.top - 14);
-  // Bottom row: lower-left (理性黑粉) and lower-right (理性粉絲)
+  ctx.fillText(mode === 'brand' ? `超級鐵粉 ${pcts[1]}%` : `${pcts[1]}%`, width - margin.right, margin.top - 14);
+  // Bottom row: lower-left and lower-right
   ctx.textAlign = 'left';
-  ctx.fillText(`理性黑粉 ${pcts[2]}%`, margin.left, height - margin.bottom + 40);
+  ctx.fillText(mode === 'brand' ? `理性黑粉 ${pcts[2]}%` : `${pcts[2]}%`, margin.left, height - margin.bottom + 40);
   ctx.textAlign = 'right';
-  ctx.fillText(`理性粉絲 ${pcts[3]}%`, width - margin.right, height - margin.bottom + 40);
+  ctx.fillText(mode === 'brand' ? `理性粉絲 ${pcts[3]}%` : `${pcts[3]}%`, width - margin.right, height - margin.bottom + 40);
   ctx.globalAlpha = 1;
 
   // Data points

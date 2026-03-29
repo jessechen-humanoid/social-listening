@@ -217,8 +217,8 @@ export default function Home() {
             return (
               <>
                 <div className="flex justify-between text-sm" style={{ color: '#6b6b6b' }}>
-                  <span>超級黑粉 {pct[0]}%</span>
-                  <span>超級鐵粉 {pct[1]}%</span>
+                  <span>{config.mode === 'brand' ? `超級黑粉 ${pct[0]}%` : `${pct[0]}%`}</span>
+                  <span>{config.mode === 'brand' ? `超級鐵粉 ${pct[1]}%` : `${pct[1]}%`}</span>
                 </div>
                 <ScatterPlot
                   results={results}
@@ -229,8 +229,8 @@ export default function Home() {
                   dotColor={config.dotColor}
                 />
                 <div className="flex justify-between text-sm" style={{ color: '#6b6b6b' }}>
-                  <span>理性黑粉 {pct[2]}%</span>
-                  <span>理性粉絲 {pct[3]}%</span>
+                  <span>{config.mode === 'brand' ? `理性黑粉 ${pct[2]}%` : `${pct[2]}%`}</span>
+                  <span>{config.mode === 'brand' ? `理性粉絲 ${pct[3]}%` : `${pct[3]}%`}</span>
                 </div>
               </>
             );
@@ -242,7 +242,7 @@ export default function Home() {
               onClick={() => exportScatterPlotPNG(
                 results, config.xAxis.name, config.yAxis.name,
                 config.conditionFilterEnabled, config.conditionText,
-                config.dotColor, config.projectName
+                config.dotColor, config.projectName, config.mode
               )}
               className="px-4 py-2 rounded-lg text-sm font-medium transition"
               style={{ backgroundColor: '#1a1a1a', color: '#ffffff' }}
