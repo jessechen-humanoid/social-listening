@@ -302,6 +302,22 @@ export default function Home() {
                     {new Date(task.created_at).toLocaleDateString('zh-TW')}
                   </span>
                   <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const taskConfig = task.config as AnalysisConfig;
+                      setConfig({
+                        ...taskConfig,
+                        projectName: '',
+                      });
+                      setFiles([]);
+                      setView('config');
+                    }}
+                    className="text-xs px-2 py-1 rounded-lg transition"
+                    style={{ color: '#1a1a1a', backgroundColor: '#f5f5f3' }}
+                  >
+                    複製設定
+                  </button>
+                  <button
                     onClick={async (e) => {
                       e.stopPropagation();
                       if (!window.confirm('確定要移除這筆分析紀錄嗎？此操作無法復原。')) return;
