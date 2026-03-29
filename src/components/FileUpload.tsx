@@ -25,14 +25,19 @@ export default function FileUpload({ files, onChange }: FileUploadProps) {
 
       try {
         const parsed = await parseFile(file);
+        // Auto-detect column defaults
+        const cols = parsed.columns;
+        const autoContent = cols.find(c => c.toLowerCase().includes('content')) || '';
+        const autoEngagement = cols.find(c => c.toLowerCase().includes('like_count')) || '';
+
         newFiles.push({
           id: uuidv4(),
           file,
           filename: file.name,
-          columns: parsed.columns,
+          columns: cols,
           rowCount: parsed.rowCount,
-          contentColumn: '',
-          engagementColumn: '',
+          contentColumn: autoContent,
+          engagementColumn: autoEngagement,
           data: parsed.data,
         });
       } catch (err) {

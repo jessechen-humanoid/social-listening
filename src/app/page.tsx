@@ -47,12 +47,7 @@ export default function Home() {
       const data = await res.json();
       setHistory(data.tasks || []);
 
-      // Check for in-progress task
-      const activeTask = data.tasks?.find((t: TaskProgress) => t.status === 'processing');
-      if (activeTask && view === 'config') {
-        setCurrentTaskId(activeTask.task_id);
-        setView('processing');
-      }
+      // No longer auto-redirect to processing — history page shows progress inline
     } catch { /* ignore */ }
   }, [browserUuid, view]);
 
@@ -60,34 +55,20 @@ export default function Home() {
     if (browserUuid) fetchHistory();
   }, [browserUuid, fetchHistory]);
 
-  // Poll progress
+  // Poll history when on history page and there are processing tasks
   useEffect(() => {
-    if (view !== 'processing' || !currentTaskId) return;
+    if (view !== 'history') return;
+    const hasProcessing = history.some(t => t.status === 'processing');
+    if (!hasProcessing) return;
 
-    const poll = async () => {
-      try {
-        const res = await fetch(`/api/tasks/${currentTaskId}/progress`);
-        const data = await res.json();
-        setProgress(data);
+    pollingRef.current = setInterval(() => {
+      fetchHistory();
+    }, 3000);
 
-        if (data.status === 'completed' || data.status === 'error') {
-          if (pollingRef.current) clearInterval(pollingRef.current);
-          // Fetch results
-          const resResults = await fetch(`/api/tasks/${currentTaskId}/results`);
-          const resultsData = await resResults.json();
-          setResults(resultsData.results || []);
-          setConfig(data.config || config);
-          setView('results');
-        }
-      } catch { /* ignore */ }
-    };
-
-    poll();
-    pollingRef.current = setInterval(poll, 2000);
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
-  }, [view, currentTaskId, config]);
+  }, [view, history, fetchHistory]);
 
   // Validate before submit
   const canSubmit = files.length > 0 && files.every(f => f.contentColumn !== '');
@@ -119,8 +100,10 @@ export default function Home() {
 
       const data = await res.json();
       if (data.task_id) {
-        setCurrentTaskId(data.task_id);
-        setView('processing');
+        setFiles([]);
+        setConfig(DEFAULT_CONFIG);
+        fetchHistory();
+        setView('history');
       } else {
         alert(data.error || '建立任務失敗');
       }
@@ -200,20 +183,6 @@ export default function Home() {
           >
             開始分析
           </button>
-        </div>
-      )}
-
-      {/* Processing view */}
-      {view === 'processing' && progress && (
-        <div className="space-y-6">
-          <ProgressBar
-            total={progress.total_items}
-            completed={progress.completed_items}
-            status={progress.status}
-          />
-          <p className="text-sm text-center" style={{ color: '#6b6b6b' }}>
-            分析持續在伺服器端進行，關閉瀏覽器不會影響分析。
-          </p>
         </div>
       )}
 
@@ -346,6 +315,28 @@ export default function Home() {
                   </button>
                 </div>
               </div>
+              {/* Inline progress bar for processing tasks */}
+              {(task.status === 'processing' || task.status === 'pending') && (
+                <div className="mt-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs" style={{ color: '#6b6b6b' }}>
+                      分析中...
+                    </span>
+                    <span className="text-xs" style={{ color: '#6b6b6b' }}>
+                      {task.completed_items} / {task.total_items}（{task.total_items > 0 ? Math.round((task.completed_items / task.total_items) * 100) : 0}%）
+                    </span>
+                  </div>
+                  <div className="w-full h-1.5 rounded-full" style={{ backgroundColor: '#f5f5f3' }}>
+                    <div
+                      className="h-1.5 rounded-full transition-all duration-300"
+                      style={{
+                        width: `${task.total_items > 0 ? Math.round((task.completed_items / task.total_items) * 100) : 0}%`,
+                        backgroundColor: '#2d2d2d',
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>
