@@ -245,7 +245,7 @@ export function exportScatterPlotPNG(
   const quadLineColor = '#c0c0c0';
   const pointColor = dotColor;
 
-  const margin = { top: 100, right: 40, bottom: 140, left: 140 };
+  const margin = { top: 60, right: 40, bottom: 80, left: 80 };
   const plotW = width - margin.left - margin.right;
   const plotH = height - margin.top - margin.bottom;
 
@@ -292,23 +292,23 @@ export function exportScatterPlotPNG(
 
   // Tick labels
   ctx.fillStyle = textColor;
-  ctx.font = '42px Arial, sans-serif';
+  ctx.font = '16px Arial, sans-serif';
   ctx.textAlign = 'center';
   for (let i = 0; i <= 10; i += 2) {
-    ctx.fillText(String(i), scaleX(i), height - margin.bottom + 50);
+    ctx.fillText(String(i), scaleX(i), height - margin.bottom + 28);
   }
   ctx.textAlign = 'right';
   for (let i = 0; i <= 10; i += 2) {
-    ctx.fillText(String(i), margin.left - 18, scaleY(i) + 14);
+    ctx.fillText(String(i), margin.left - 12, scaleY(i) + 6);
   }
 
   // Axis labels
   ctx.fillStyle = textColor;
-  ctx.font = '48px Arial, sans-serif';
+  ctx.font = '16px Arial, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText(xAxisName, width / 2, height - 20);
+  ctx.fillText(xAxisName, width / 2, height - 10);
   ctx.save();
-  ctx.translate(40, height / 2);
+  ctx.translate(18, height / 2);
   ctx.rotate(-Math.PI / 2);
   ctx.fillText(yAxisName, 0, 0);
   ctx.restore();
@@ -330,18 +330,18 @@ export function exportScatterPlotPNG(
   const total = points.length || 1;
   const pcts = quadCounts.map(c => Math.round((c / total) * 100));
   ctx.fillStyle = textColor;
-  ctx.font = '42px Arial, sans-serif';
+  ctx.font = '24px Arial, sans-serif';
   ctx.globalAlpha = 0.7;
   // Top row: upper-left and upper-right
   ctx.textAlign = 'left';
-  ctx.fillText(mode === 'brand' ? `超級黑粉 ${pcts[0]}%` : `${pcts[0]}%`, margin.left, margin.top - 40);
+  ctx.fillText(mode === 'brand' ? `超級黑粉 ${pcts[0]}%` : `${pcts[0]}%`, margin.left, margin.top - 20);
   ctx.textAlign = 'right';
-  ctx.fillText(mode === 'brand' ? `超級鐵粉 ${pcts[1]}%` : `${pcts[1]}%`, width - margin.right, margin.top - 40);
+  ctx.fillText(mode === 'brand' ? `超級鐵粉 ${pcts[1]}%` : `${pcts[1]}%`, width - margin.right, margin.top - 20);
   // Bottom row: lower-left and lower-right
   ctx.textAlign = 'left';
-  ctx.fillText(mode === 'brand' ? `理性黑粉 ${pcts[2]}%` : `${pcts[2]}%`, margin.left, height - margin.bottom + 100);
+  ctx.fillText(mode === 'brand' ? `理性黑粉 ${pcts[2]}%` : `${pcts[2]}%`, margin.left, height - margin.bottom + 50);
   ctx.textAlign = 'right';
-  ctx.fillText(mode === 'brand' ? `理性粉絲 ${pcts[3]}%` : `${pcts[3]}%`, width - margin.right, height - margin.bottom + 100);
+  ctx.fillText(mode === 'brand' ? `理性粉絲 ${pcts[3]}%` : `${pcts[3]}%`, width - margin.right, height - margin.bottom + 50);
   ctx.globalAlpha = 1;
 
   // Data points
@@ -359,10 +359,10 @@ export function exportScatterPlotPNG(
     const { cx, cy } = computeCentroid(points);
     const sx = scaleX(cx);
     const sy = scaleY(cy);
-    const arm = 36;
+    const arm = 12;
 
     ctx.strokeStyle = '#c75c5c';
-    ctx.lineWidth = 7.5;
+    ctx.lineWidth = 5;
     ctx.beginPath();
     ctx.moveTo(sx - arm, sy);
     ctx.lineTo(sx + arm, sy);
@@ -373,9 +373,9 @@ export function exportScatterPlotPNG(
     ctx.stroke();
 
     ctx.fillStyle = '#c75c5c';
-    ctx.font = '42px Arial, sans-serif';
+    ctx.font = '24px Arial, sans-serif';
     ctx.textAlign = 'left';
-    ctx.fillText(`(${cx}, ${cy})`, sx + 44, sy - 22);
+    ctx.fillText(`(${cx}, ${cy})`, sx + 16, sy - 10);
   }
 
   // Download
