@@ -9,7 +9,9 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "googleapis": "^171.4.0",
     "next": "16.2.1",
+    "next-auth": "^5.0.0-beta.30",
     "openai": "^6.33.0",
     "papaparse": "^5.5.3",
     "pg": "^8.20.0",
