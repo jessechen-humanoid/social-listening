@@ -26,7 +26,7 @@ export async function checkSheetPermission(userEmail: string): Promise<boolean> 
 
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId: SPREADSHEET_ID,
-    range: `${SHEET_NAME}`,
+    range: `'${SHEET_NAME}'`,
   });
 
   const rows = response.data.values;
