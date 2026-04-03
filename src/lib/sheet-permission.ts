@@ -1,8 +1,7 @@
-import { google } from "googleapis";
+import { JWT } from "google-auth-library";
 
 const SPREADSHEET_ID = "16Ojc4QSnZ5XR3AQ3QZIMKa0q6XdnGZ15tyOKk7sTbZc";
-const SHEET_NAME = "冒險者公會";
-// Column positions (0-indexed): email column and permission column (D = index 3)
+// Column D = index 3 (0-indexed)
 const PERMISSION_COLUMN_INDEX = 3;
 
 function getAuthClient() {
@@ -10,10 +9,10 @@ function getAuthClient() {
   const privateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
 
   if (!email || !privateKey) {
-    throw new Error("Missing Google Service Account credentials: GOOGLE_SERVICE_ACCOUNT_EMAIL and GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY must be set");
+    throw new Error("Missing Google Service Account credentials");
   }
 
-  return new google.auth.JWT({
+  return new JWT({
     email,
     key: privateKey.replace(/\\n/g, "\n"),
     scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
@@ -22,25 +21,31 @@ function getAuthClient() {
 
 export async function checkSheetPermission(userEmail: string): Promise<boolean> {
   const authClient = getAuthClient();
-  const sheets = google.sheets({ version: "v4", auth: authClient });
+  const token = await authClient.authorize();
 
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: SPREADSHEET_ID,
-    range: `'${SHEET_NAME}'`,
+  // Use fetch directly to avoid googleapis URL encoding issues with Chinese sheet names
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:Z`;
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token.access_token}`,
+    },
   });
 
-  const rows = response.data.values;
-  if (!rows) return false;
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Google Sheets API error: ${response.status} ${errorText}`);
+  }
+
+  const data = await response.json();
+  const rows: string[][] = data.values || [];
 
   for (const row of rows) {
-    // Find the row where any cell contains the user's email
     const emailInRow = row.some(
-      (cell: string) => typeof cell === "string" && cell.toLowerCase().trim() === userEmail.toLowerCase().trim()
+      (cell) => typeof cell === "string" && cell.toLowerCase().trim() === userEmail.toLowerCase().trim()
     );
 
     if (emailInRow) {
       const permissionCell = row[PERMISSION_COLUMN_INDEX];
-      // Check if D column has a checkmark (TRUE, ✓, V, v, or any truthy value)
       if (permissionCell) {
         const val = String(permissionCell).trim().toUpperCase();
         return val === "TRUE" || val === "✓" || val === "V" || val === "✔" || val === "YES";
