@@ -9,6 +9,16 @@ export default function UserMenu() {
 
   return (
     <div className="flex items-center gap-3">
+      {session.user.image && (
+        <img
+          src={session.user.image}
+          alt=""
+          width={32}
+          height={32}
+          className="rounded-full"
+          referrerPolicy="no-referrer"
+        />
+      )}
       <span className="text-sm" style={{ color: "#6b6b6b" }}>
         {session.user.name || session.user.email}
       </span>
