@@ -5,7 +5,11 @@ export async function POST() {
     await migrate();
     return Response.json({ success: true, message: 'Migration complete' });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return Response.json({ success: false, error: message }, { status: 500 });
+    console.error('Migration failed:', error);
+    const message =
+      error instanceof Error
+        ? error.message + (error.stack ? '\n' + error.stack : '')
+        : JSON.stringify(error);
+    return Response.json({ success: false, error: message || 'Empty error' }, { status: 500 });
   }
 }

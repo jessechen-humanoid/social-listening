@@ -12,6 +12,19 @@ interface ScatterPlotProps {
   conditionText: string;
   dotColor?: string;
   exportMode?: boolean;
+  // Deep mode: render each point at its platform's alpha, use calibrated scores,
+  // and exclude filtered_out / not_real_user rows. The caller passes a per-platform
+  // alpha map (e.g., from `brand.platform_settings.scatter_alpha`).
+  weighted?: boolean;
+  platformAlpha?: Record<string, number>;
+}
+
+interface DeepResultFields {
+  emotion_calibrated?: number | null;
+  favor_calibrated?: number | null;
+  filtered_out?: boolean | null;
+  not_real_user?: boolean | null;
+  platform?: string | null;
 }
 
 const QUADRANT_LABELS = [
@@ -59,10 +72,19 @@ export default function ScatterPlot({
   conditionText,
   dotColor = '#404040',
   exportMode = false,
+  weighted = false,
+  platformAlpha = { fb: 0.08, ig: 0.12, threads: 0.02, dcard: 0.18 },
 }: ScatterPlotProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const filteredResults = results.filter(r => {
+    if (weighted) {
+      const d = r as TaskResult & DeepResultFields;
+      if (d.filtered_out || d.not_real_user) return false;
+      const x = d.favor_calibrated ?? r.x_score;
+      const y = d.emotion_calibrated ?? r.y_score;
+      return x !== null && x !== undefined && y !== null && y !== undefined;
+    }
     if (r.status !== 'completed' || r.x_score === null || r.y_score === null) return false;
     if (conditionFilterEnabled && conditionText) {
       return r.condition_result === true;
@@ -148,10 +170,16 @@ export default function ScatterPlot({
     const scaleFactor = 12 / Math.sqrt(maxEngagement);
 
     const points = filteredResults.map(r => {
-      const { jx, jy } = applyJitter(r.x_score!, r.y_score!, r.row_index);
+      const d = r as TaskResult & DeepResultFields;
+      const xRaw = weighted ? d.favor_calibrated ?? r.x_score! : r.x_score!;
+      const yRaw = weighted ? d.emotion_calibrated ?? r.y_score! : r.y_score!;
+      const { jx, jy } = applyJitter(Number(xRaw), Number(yRaw), r.row_index);
       const eng = r.engagement_value || 0;
       const radius = eng > 0 ? baseRadius + Math.sqrt(eng) * scaleFactor : baseRadius;
-      return { x: jx, y: jy, radius, engagement: eng };
+      const alpha = weighted && d.platform
+        ? platformAlpha[d.platform] ?? 0.1
+        : 0.35;
+      return { x: jx, y: jy, radius, engagement: eng, alpha };
     });
 
     // Quadrant labels are rendered outside the chart in page.tsx, not inside the canvas
@@ -161,7 +189,7 @@ export default function ScatterPlot({
       ctx.beginPath();
       ctx.arc(scaleX(p.x), scaleY(p.y), p.radius, 0, Math.PI * 2);
       ctx.fillStyle = pointColor;
-      ctx.globalAlpha = 0.35;
+      ctx.globalAlpha = p.alpha;
       ctx.fill();
       ctx.globalAlpha = 1;
     }
@@ -189,7 +217,7 @@ export default function ScatterPlot({
       ctx.textAlign = 'left';
       ctx.fillText(`(${cx}, ${cy})`, sx + 14, sy - 6);
     }
-  }, [filteredResults, xAxisName, yAxisName, dotColor, exportMode]);
+  }, [filteredResults, xAxisName, yAxisName, dotColor, exportMode, weighted, platformAlpha]);
 
   useEffect(() => {
     const canvas = canvasRef.current;

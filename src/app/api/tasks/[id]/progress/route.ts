@@ -1,4 +1,5 @@
 import { query } from '@/lib/db';
+import { getStageProgress } from '@/lib/deep-pipeline/orchestrator';
 
 export async function GET(
   _request: Request,
@@ -8,7 +9,7 @@ export async function GET(
     const { id: taskId } = await params;
 
     const result = await query(
-      `SELECT task_id, status, config, total_items, completed_items, created_at, updated_at
+      `SELECT task_id, status, mode, config, total_items, completed_items, created_at, updated_at
        FROM tasks WHERE task_id = $1`,
       [taskId]
     );
@@ -22,14 +23,18 @@ export async function GET(
       ? Math.round((task.completed_items / task.total_items) * 100)
       : 0;
 
+    const stages = task.mode === 'deep' ? await getStageProgress(taskId) : [];
+
     return Response.json({
       task_id: task.task_id,
       status: task.status,
+      mode: task.mode,
       total_items: task.total_items,
       completed_items: task.completed_items,
       percentage,
       config: task.config,
       created_at: task.created_at,
+      stages,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';

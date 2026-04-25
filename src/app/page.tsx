@@ -3,11 +3,19 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import FileUpload from '@/components/FileUpload';
 import AnalysisConfigPanel from '@/components/AnalysisConfig';
+import DeepConfig from '@/components/DeepConfig';
+import ColumnMappingStep, { type ConfirmedMappings } from '@/components/ColumnMappingStep';
 import ScatterPlot, { exportScatterPlotPNG, computeQuadrantCounts } from '@/components/ScatterPlot';
 import ProgressBar from '@/components/ProgressBar';
 import { exportReportCSV } from '@/lib/export-report';
 import { getBrowserUuid } from '@/lib/browser-uuid';
-import type { UploadedFile, AnalysisConfig, TaskResult, TaskProgress } from '@/lib/types';
+import type {
+  UploadedFile,
+  AnalysisConfig,
+  DeepAnalysisConfig,
+  TaskResult,
+  TaskProgress,
+} from '@/lib/types';
 
 const DEFAULT_CONFIG: AnalysisConfig = {
   mode: 'brand',
@@ -21,12 +29,23 @@ const DEFAULT_CONFIG: AnalysisConfig = {
   maxRows: 0,
 };
 
-type ViewState = 'config' | 'processing' | 'results' | 'history';
+const DEFAULT_DEEP_CONFIG: DeepAnalysisConfig = {
+  mode: 'deep',
+  projectName: '',
+  brandId: '',
+  brandName: '',
+  platform: 'fb',
+  timeRangeStart: '',
+  timeRangeEnd: '',
+};
+
+type ViewState = 'config' | 'deep-config' | 'deep-mapping' | 'processing' | 'results' | 'history';
 
 export default function Home() {
   const [view, setView] = useState<ViewState>('config');
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [config, setConfig] = useState<AnalysisConfig>(DEFAULT_CONFIG);
+  const [deepConfig, setDeepConfig] = useState<DeepAnalysisConfig>(DEFAULT_DEEP_CONFIG);
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   const [progress, setProgress] = useState<TaskProgress | null>(null);
   const [results, setResults] = useState<TaskResult[]>([]);
@@ -34,9 +53,10 @@ export default function Home() {
   const [browserUuid, setBrowserUuid] = useState('');
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Initialize UUID
+  // Initialize UUID — defer setState to avoid cascading effect render
   useEffect(() => {
-    setBrowserUuid(getBrowserUuid());
+    const id = setTimeout(() => setBrowserUuid(getBrowserUuid()), 0);
+    return () => clearTimeout(id);
   }, []);
 
   // Fetch history
@@ -52,7 +72,9 @@ export default function Home() {
   }, [browserUuid, view]);
 
   useEffect(() => {
-    if (browserUuid) fetchHistory();
+    if (!browserUuid) return;
+    const id = setTimeout(() => { fetchHistory(); }, 0);
+    return () => clearTimeout(id);
   }, [browserUuid, fetchHistory]);
 
   // Poll history when on history page and there are processing tasks
@@ -112,6 +134,55 @@ export default function Home() {
     }
   };
 
+  // Deep mode: validate config, then move to mapping step
+  const canProceedToDeepMapping =
+    !!deepConfig.brandId &&
+    !!deepConfig.platform &&
+    !!deepConfig.timeRangeStart &&
+    !!deepConfig.timeRangeEnd &&
+    files.length > 0 &&
+    (deepConfig.platform !== 'fb' || files.length === 3);
+
+  const handleStartDeepAnalysis = async (mappings: ConfirmedMappings) => {
+    try {
+      const filesPayload = files.map((f) => {
+        const m = mappings.perFile.find((x) => x.fileId === f.id);
+        return {
+          filename: f.filename,
+          role: f.role,
+          columnMapping: m?.mapping ?? {},
+          data: f.data,
+          forumFilter:
+            f.role === 'hotpost' && deepConfig.platform === 'dcard'
+              ? mappings.forumFilter
+              : null,
+        };
+      });
+
+      const res = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          browserUuid,
+          mode: 'deep',
+          config: deepConfig,
+          files: filesPayload,
+        }),
+      });
+      const data = await res.json();
+      if (data.task_id) {
+        setFiles([]);
+        setDeepConfig(DEFAULT_DEEP_CONFIG);
+        fetchHistory();
+        setView('history');
+      } else {
+        alert(data.error ?? '建立深度任務失敗');
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '發生錯誤');
+    }
+  };
+
   const handleViewResult = async (taskId: string) => {
     setCurrentTaskId(taskId);
     try {
@@ -157,7 +228,14 @@ export default function Home() {
             className="px-3 py-1.5 rounded-lg text-sm font-medium transition"
             style={view === 'config' ? { backgroundColor: 'rgba(0,0,0,0.04)', color: '#1a1a1a' } : { color: '#6b6b6b' }}
           >
-            新增分析
+            輕度分析
+          </button>
+          <button
+            onClick={() => { setView('deep-config'); setCurrentTaskId(null); setResults([]); setFiles([]); setDeepConfig(DEFAULT_DEEP_CONFIG); }}
+            className="px-3 py-1.5 rounded-lg text-sm font-medium transition"
+            style={view === 'deep-config' || view === 'deep-mapping' ? { backgroundColor: 'rgba(0,0,0,0.04)', color: '#1a1a1a' } : { color: '#6b6b6b' }}
+          >
+            深度分析
           </button>
           <button
             onClick={() => { setView('history'); fetchHistory(); }}
@@ -169,7 +247,38 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Config view */}
+      {/* Deep config view */}
+      {view === 'deep-config' && (
+        <div className="space-y-6">
+          <DeepConfig config={deepConfig} onChange={setDeepConfig} />
+          <FileUpload
+            files={files}
+            onChange={setFiles}
+            mode="deep"
+            platform={deepConfig.platform}
+          />
+          <button
+            onClick={() => setView('deep-mapping')}
+            disabled={!canProceedToDeepMapping}
+            className="w-full py-3 rounded-lg font-medium text-sm transition disabled:opacity-40"
+            style={{ backgroundColor: '#1a1a1a', color: '#ffffff' }}
+          >
+            下一步：欄位對應
+          </button>
+        </div>
+      )}
+
+      {/* Deep mapping view */}
+      {view === 'deep-mapping' && (
+        <ColumnMappingStep
+          files={files}
+          platform={deepConfig.platform}
+          onBack={() => setView('deep-config')}
+          onConfirm={handleStartDeepAnalysis}
+        />
+      )}
+
+      {/* Light config view */}
       {view === 'config' && (
         <div className="space-y-6">
           <AnalysisConfigPanel config={config} onChange={setConfig} totalRows={files.reduce((sum, f) => sum + f.rowCount, 0)} />
@@ -256,6 +365,46 @@ export default function Home() {
             >
               下載分析報表
             </button>
+            {/* Deep-mode-only: download XLSX with current detail + historical summary */}
+            {progress?.mode === 'deep' && currentTaskId && (
+              <>
+                <a
+                  href={`/api/tasks/${currentTaskId}/export-xlsx`}
+                  className="px-4 py-2 rounded-lg text-sm font-medium transition"
+                  style={{ backgroundColor: '#1a1a1a', color: '#ffffff' }}
+                >
+                  下載完整 XLSX
+                </a>
+                <button
+                  onClick={async () => {
+                    if (!currentTaskId) return;
+                    // Bundle just contains placeholder charts; the real charts are
+                    // composed in the canvas above and serialized by the caller.
+                    // Send empty charts array to get a metadata-only zip; users
+                    // typically use the XLSX export instead.
+                    const res = await fetch(`/api/tasks/${currentTaskId}/export-bundle`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ charts: [] }),
+                    });
+                    if (res.headers.get('X-Async-Mode') === 'true') {
+                      alert('Preparing bundle... 大型任務改走背景處理。');
+                    }
+                    const blob = await res.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `charts-${currentTaskId}.zip`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="px-4 py-2 rounded-lg text-sm font-medium transition"
+                  style={{ backgroundColor: '#f5f5f3', color: '#1a1a1a' }}
+                >
+                  Download All Charts
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}

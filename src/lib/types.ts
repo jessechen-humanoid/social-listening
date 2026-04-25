@@ -1,3 +1,6 @@
+import type { FileRole } from './column-mapping';
+import type { Platform } from './brands';
+
 export interface UploadedFile {
   id: string;
   file: File;
@@ -7,9 +10,12 @@ export interface UploadedFile {
   contentColumn: string;
   engagementColumn: string;
   data: Record<string, unknown>[];
+  // Deep mode: which role slot this file occupies. Undefined for light mode.
+  role?: FileRole;
 }
 
-export interface AnalysisConfig {
+// Light mode (existing) — Brand or Custom analysis with user-defined axes.
+export interface LightAnalysisConfig {
   mode: 'brand' | 'custom';
   projectName: string;
   conditionText: string;
@@ -19,6 +25,46 @@ export interface AnalysisConfig {
   model: string;
   dotColor: string;
   maxRows: number;
+}
+
+// Deep mode — locked axes (Favor × Emotion), brand-bound, multi-stage pipeline.
+export interface DeepAnalysisConfig {
+  mode: 'deep';
+  projectName: string;
+  brandId: string;
+  brandName: string;
+  platform: Platform;
+  timeRangeStart: string; // YYYY-MM-DD
+  timeRangeEnd: string;
+  // Optional per-stage overrides; otherwise the brand's active prompts are used
+  promptVersionOverrides?: Record<string, string>;
+}
+
+// Backward-compatible alias used by existing components / API.
+// Existing code references `AnalysisConfig` and assumes the light shape;
+// keep that shape exported under the same name to avoid breaking light mode.
+export type AnalysisConfig = LightAnalysisConfig;
+
+export interface BrandSummary {
+  id: string;
+  name: string;
+  calibration_set_id: string | null;
+}
+
+export interface PromptVersionSummary {
+  id: string;
+  stage_name: string;
+  version_label: string;
+  model_snapshot: string;
+  active: boolean;
+}
+
+export interface CalibrationSetSummary {
+  id: string;
+  name: string;
+  brand_id: string;
+  golden_model: string;
+  locked: boolean;
 }
 
 export interface AxisConfig {
@@ -50,4 +96,12 @@ export interface TaskProgress {
   percentage: number;
   config: AnalysisConfig;
   created_at: string;
+  mode?: 'light' | 'deep';
+  stages?: Array<{
+    stage_name: string;
+    status: string;
+    input_count: number;
+    output_count: number;
+    error: string | null;
+  }>;
 }
