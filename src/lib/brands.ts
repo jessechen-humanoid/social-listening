@@ -1,14 +1,9 @@
 import { v4 as uuidv4 } from 'uuid';
 import { query } from './db';
+import { SUPPORTED_PLATFORMS, type Platform, type PlatformSettings } from './platforms';
 
-export type Platform = 'fb' | 'ig' | 'threads' | 'dcard';
-
-export const SUPPORTED_PLATFORMS: Platform[] = ['fb', 'ig', 'threads', 'dcard'];
-
-export interface PlatformSettings {
-  scatter_alpha: Record<Platform, number>;
-  timeline_colors: { positive: string; negative: string };
-}
+export { SUPPORTED_PLATFORMS };
+export type { Platform, PlatformSettings };
 
 export interface Brand {
   id: string;

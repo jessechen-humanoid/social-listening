@@ -1,5 +1,5 @@
 import type { FileRole } from './column-mapping';
-import type { Platform } from './brands';
+import type { Platform } from './platforms';
 
 export interface UploadedFile {
   id: string;

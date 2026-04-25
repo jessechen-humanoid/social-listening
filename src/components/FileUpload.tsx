@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { parseFile } from '@/lib/parse-file';
 import type { UploadedFile } from '@/lib/types';
 import type { FileRole } from '@/lib/column-mapping';
-import type { Platform } from '@/lib/brands';
+import type { Platform } from '@/lib/platforms';
 
 type Mode = 'light' | 'deep';
 

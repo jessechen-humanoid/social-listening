@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import type { DeepAnalysisConfig, BrandSummary, PromptVersionSummary } from '@/lib/types';
-import type { Platform } from '@/lib/brands';
+import type { Platform } from '@/lib/platforms';
 
 const PLATFORMS: Array<{ value: Platform; label: string }> = [
   { value: 'fb', label: 'Facebook' },

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import type { UploadedFile } from '@/lib/types';
-import type { Platform } from '@/lib/brands';
+import type { Platform } from '@/lib/platforms';
 import {
   guessColumnMapping,
   validateMapping,
