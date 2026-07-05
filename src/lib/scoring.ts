@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { query } from './db';
+import { claimTask, createHeartbeat } from './task-claim';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -84,6 +85,14 @@ async function sleep(ms: number) {
 }
 
 export async function processTask(taskId: string) {
+  // Single-runner claim: if another live runner holds this task, do nothing.
+  // Claiming also sets status = 'processing' and stamps heartbeat_at.
+  if (!(await claimTask(taskId))) {
+    console.log(`Task ${taskId} is held by another runner, skipping`);
+    return;
+  }
+  const heartbeat = createHeartbeat(taskId);
+
   try {
     // Get task config
     const taskResult = await query('SELECT config FROM tasks WHERE task_id = $1', [taskId]);
@@ -99,11 +108,6 @@ export async function processTask(taskId: string) {
       [taskId]
     );
 
-    await query(
-      "UPDATE tasks SET status = 'processing', updated_at = NOW() WHERE task_id = $1",
-      [taskId]
-    );
-
     for (const row of pendingResults.rows) {
       try {
         let lastError: Error | null = null;
@@ -111,6 +115,7 @@ export async function processTask(taskId: string) {
         // Retry up to 3 times with exponential backoff
         for (let attempt = 0; attempt < 3; attempt++) {
           try {
+            await heartbeat();
             const result = await scoreContent(config, row.content_text);
 
             await query(

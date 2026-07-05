@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { query } from './db';
+import { query, withTransaction } from './db';
 import { DEEP_STAGES, type DeepStageName } from './seed-prompts';
 
 export interface PromptVersion {
@@ -125,17 +125,13 @@ export async function promoteToActive(versionId: string): Promise<PromoteResult>
 
   // Atomic flip: deactivate existing active for this stage, then activate target.
   // Partial unique index requires both ops in one transaction.
-  await query('BEGIN');
-  try {
-    await query(`UPDATE prompt_versions SET active = FALSE WHERE stage_name = $1 AND active = TRUE`, [
-      version.stage_name,
-    ]);
-    await query(`UPDATE prompt_versions SET active = TRUE WHERE id = $1`, [versionId]);
-    await query('COMMIT');
-  } catch (err) {
-    await query('ROLLBACK');
-    throw err;
-  }
+  await withTransaction(async (client) => {
+    await client.query(
+      `UPDATE prompt_versions SET active = FALSE WHERE stage_name = $1 AND active = TRUE`,
+      [version.stage_name]
+    );
+    await client.query(`UPDATE prompt_versions SET active = TRUE WHERE id = $1`, [versionId]);
+  });
 
   const promoted = (await getPromptByVersionId(versionId)) as PromptVersion;
 
@@ -170,21 +166,16 @@ export async function bindPromptVersionsToTask(
   taskId: string,
   stageVersionMap: Record<DeepStageName, string>
 ): Promise<void> {
-  await query('BEGIN');
-  try {
+  await withTransaction(async (client) => {
     for (const stageName of Object.keys(stageVersionMap) as DeepStageName[]) {
-      await query(
+      await client.query(
         `INSERT INTO task_prompt_bindings (task_id, stage_name, prompt_version_id)
          VALUES ($1, $2, $3)
          ON CONFLICT (task_id, stage_name) DO UPDATE SET prompt_version_id = EXCLUDED.prompt_version_id`,
         [taskId, stageName, stageVersionMap[stageName]]
       );
     }
-    await query('COMMIT');
-  } catch (err) {
-    await query('ROLLBACK');
-    throw err;
-  }
+  });
 }
 
 export async function getTaskPromptBindings(

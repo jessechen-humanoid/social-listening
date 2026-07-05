@@ -1,6 +1,8 @@
 import { query } from '@/lib/db';
 import { migrate } from '@/lib/migrate';
+import { requireSession } from '@/lib/require-session';
 import { processTask } from '@/lib/scoring';
+import { MAX_BODY_BYTES, validateTaskInput } from '@/lib/validate-task-input';
 import {
   DeepTaskValidationError,
   validateDeepTaskFields,
@@ -34,6 +36,17 @@ function deepStagesForPlatform(platform: Platform): Array<typeof ALL_DEEP_STAGES
 }
 
 export async function POST(request: Request) {
+  const { response: authResponse } = await requireSession();
+  if (authResponse) return authResponse;
+
+  const contentLength = Number(request.headers.get('content-length') ?? '0');
+  if (contentLength > MAX_BODY_BYTES) {
+    return Response.json(
+      { error: `請求內容超過 ${MAX_BODY_BYTES / 1024 / 1024}MB 上限` },
+      { status: 413 }
+    );
+  }
+
   try {
     await ensureMigrated();
 
@@ -44,7 +57,12 @@ export async function POST(request: Request) {
       return Response.json({ error: '缺少必要欄位' }, { status: 400 });
     }
 
-    const taskMode: 'light' | 'deep' = mode === 'deep' ? 'deep' : 'light';
+    const validation = validateTaskInput({ mode, config, files });
+    if (!validation.ok) {
+      return Response.json({ error: validation.error }, { status: validation.status });
+    }
+
+    const taskMode: 'light' | 'deep' = validation.mode;
     const taskId = uuidv4();
 
     if (taskMode === 'deep') {
@@ -166,6 +184,9 @@ export async function POST(request: Request) {
 }
 
 export async function GET(request: Request) {
+  const { response: authResponse } = await requireSession();
+  if (authResponse) return authResponse;
+
   try {
     await ensureMigrated();
 

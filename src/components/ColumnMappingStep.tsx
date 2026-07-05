@@ -178,11 +178,11 @@ export default function ColumnMappingStep({
         return {
           fileId: m.fileId,
           result: file
-            ? validateMapping(m.mapping, m.role, file.columns)
+            ? validateMapping(m.mapping, m.role, file.columns, platform)
             : { ok: false, missing: [] },
         };
       }),
-    [mappings, files]
+    [mappings, files, platform]
   );
 
   const blocked = validations.some((v) => !v.result.ok);
@@ -210,7 +210,7 @@ export default function ColumnMappingStep({
         const file = files.find((f) => f.id === m.fileId);
         if (!file) return null;
         const validation = validations.find((v) => v.fileId === m.fileId)?.result;
-        const fields = getLogicalFields(m.role).slice();
+        const fields = getLogicalFields(m.role, platform).slice();
         if (rolePlatformNeedsForumFilter(m.role, platform)) {
           fields.push({ field: 'forum', required: false });
         }

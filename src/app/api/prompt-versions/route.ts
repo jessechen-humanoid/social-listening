@@ -1,6 +1,10 @@
 import { listPromptVersions } from '@/lib/prompt-versions';
+import { requireSession } from '@/lib/require-session';
 
 export async function GET(request: Request) {
+  const { response: authResponse } = await requireSession();
+  if (authResponse) return authResponse;
+
   try {
     const { searchParams } = new URL(request.url);
     const stage = searchParams.get('stage') as

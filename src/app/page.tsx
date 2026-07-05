@@ -47,6 +47,10 @@ export default function Home() {
   const [config, setConfig] = useState<AnalysisConfig>(DEFAULT_CONFIG);
   const [deepConfig, setDeepConfig] = useState<DeepAnalysisConfig>(DEFAULT_DEEP_CONFIG);
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
+  // Display config for viewing a historical task's results — kept separate
+  // from the light form `config` so viewing a deep task (whose config has no
+  // xAxis/yAxis) never pollutes or crashes the form state.
+  const [viewConfig, setViewConfig] = useState<AnalysisConfig>(DEFAULT_CONFIG);
   const [progress, setProgress] = useState<TaskProgress | null>(null);
   const [results, setResults] = useState<TaskResult[]>([]);
   const [history, setHistory] = useState<TaskProgress[]>([]);
@@ -104,6 +108,7 @@ export default function Home() {
     try {
       const payload = {
         browserUuid,
+        mode: 'light',
         config,
         files: files.map(f => ({
           filename: f.filename,
@@ -198,17 +203,60 @@ export default function Home() {
       setProgress(progressData);
       setResults(resultsData.results || []);
 
-      if (progressData.config) {
-        setConfig(progressData.config);
+      // Deep task configs have no xAxis/yAxis — render them with fixed axis
+      // names instead of pushing them into light-config-shaped state.
+      if (progressData.mode === 'deep') {
+        setViewConfig({
+          ...DEFAULT_CONFIG,
+          projectName:
+            (progressData.config as unknown as DeepAnalysisConfig)?.projectName ?? '',
+          xAxis: { ...DEFAULT_CONFIG.xAxis, name: '品牌好感度' },
+          yAxis: { ...DEFAULT_CONFIG.yAxis, name: '情緒強度' },
+        });
+      } else {
+        setViewConfig(progressData.config ?? DEFAULT_CONFIG);
       }
 
-      if (progressData.status === 'processing') {
+      if (progressData.status === 'processing' || progressData.status === 'pending') {
         setView('processing');
       } else {
         setView('results');
       }
     } catch { /* ignore */ }
   };
+
+  // Poll the task being viewed while on the processing view; switch to the
+  // results view once it completes. Interval is cleared on view change/unmount.
+  useEffect(() => {
+    if (view !== 'processing' || !currentTaskId) return;
+    const taskId = currentTaskId;
+    let cancelled = false;
+
+    const id = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/tasks/${taskId}/progress`);
+        const data = await res.json();
+        if (cancelled) return;
+        setProgress(data);
+
+        if (data.status === 'completed') {
+          const resultsRes = await fetch(`/api/tasks/${taskId}/results`);
+          const resultsData = await resultsRes.json();
+          if (cancelled) return;
+          setResults(resultsData.results || []);
+          setView('results');
+        } else if (data.status === 'error') {
+          setView('history');
+          fetchHistory();
+        }
+      } catch { /* transient network error — keep polling */ }
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [view, currentTaskId, fetchHistory]);
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8">
@@ -295,20 +343,29 @@ export default function Home() {
         </div>
       )}
 
+      {/* Processing view: live progress for the task being viewed */}
+      {view === 'processing' && progress && (
+        <ProgressBar
+          total={progress.total_items}
+          completed={progress.completed_items}
+          status={progress.status}
+        />
+      )}
+
       {/* Results view */}
       {view === 'results' && (
         <div className="space-y-6">
           {/* Condition filter toggle for results */}
-          {config.conditionText && (
+          {viewConfig.conditionText && (
             <div className="flex items-center gap-3 rounded-xl p-4" style={{ backgroundColor: '#ffffff', border: '1px solid #e8e8e5' }}>
               <label className="flex items-center gap-2 text-sm cursor-pointer" style={{ color: '#1a1a1a' }}>
                 <input
                   type="checkbox"
-                  checked={config.conditionFilterEnabled}
-                  onChange={e => setConfig({ ...config, conditionFilterEnabled: e.target.checked })}
+                  checked={viewConfig.conditionFilterEnabled}
+                  onChange={e => setViewConfig({ ...viewConfig, conditionFilterEnabled: e.target.checked })}
                   className="w-4 h-4 accent-[#2d2d2d]"
                 />
-                僅顯示符合「{config.conditionText}」的內容
+                僅顯示符合「{viewConfig.conditionText}」的內容
               </label>
             </div>
           )}
@@ -317,7 +374,7 @@ export default function Home() {
           {(() => {
             const visible = results.filter(r => {
               if (r.status !== 'completed' || r.x_score === null || r.y_score === null) return false;
-              if (config.conditionFilterEnabled && config.conditionText) return r.condition_result === true;
+              if (viewConfig.conditionFilterEnabled && viewConfig.conditionText) return r.condition_result === true;
               return true;
             });
             const counts = computeQuadrantCounts(visible.map(r => ({ x: r.x_score!, y: r.y_score! })));
@@ -326,20 +383,20 @@ export default function Home() {
             return (
               <>
                 <div className="flex justify-between text-sm" style={{ color: '#6b6b6b' }}>
-                  <span>{config.mode === 'brand' ? `超級黑粉 ${pct[0]}%` : `${pct[0]}%`}</span>
-                  <span>{config.mode === 'brand' ? `超級鐵粉 ${pct[1]}%` : `${pct[1]}%`}</span>
+                  <span>{viewConfig.mode === 'brand' ? `超級黑粉 ${pct[0]}%` : `${pct[0]}%`}</span>
+                  <span>{viewConfig.mode === 'brand' ? `超級鐵粉 ${pct[1]}%` : `${pct[1]}%`}</span>
                 </div>
                 <ScatterPlot
                   results={results}
-                  xAxisName={config.xAxis.name}
-                  yAxisName={config.yAxis.name}
-                  conditionFilterEnabled={config.conditionFilterEnabled}
-                  conditionText={config.conditionText}
-                  dotColor={config.dotColor}
+                  xAxisName={viewConfig.xAxis.name}
+                  yAxisName={viewConfig.yAxis.name}
+                  conditionFilterEnabled={viewConfig.conditionFilterEnabled}
+                  conditionText={viewConfig.conditionText}
+                  dotColor={viewConfig.dotColor}
                 />
                 <div className="flex justify-between text-sm" style={{ color: '#6b6b6b' }}>
-                  <span>{config.mode === 'brand' ? `理性黑粉 ${pct[2]}%` : `${pct[2]}%`}</span>
-                  <span>{config.mode === 'brand' ? `理性粉絲 ${pct[3]}%` : `${pct[3]}%`}</span>
+                  <span>{viewConfig.mode === 'brand' ? `理性黑粉 ${pct[2]}%` : `${pct[2]}%`}</span>
+                  <span>{viewConfig.mode === 'brand' ? `理性粉絲 ${pct[3]}%` : `${pct[3]}%`}</span>
                 </div>
               </>
             );
@@ -349,9 +406,9 @@ export default function Home() {
           <div className="flex gap-3">
             <button
               onClick={() => exportScatterPlotPNG(
-                results, config.xAxis.name, config.yAxis.name,
-                config.conditionFilterEnabled, config.conditionText,
-                config.dotColor, config.projectName, config.mode
+                results, viewConfig.xAxis.name, viewConfig.yAxis.name,
+                viewConfig.conditionFilterEnabled, viewConfig.conditionText,
+                viewConfig.dotColor, viewConfig.projectName, viewConfig.mode
               )}
               className="px-4 py-2 rounded-lg text-sm font-medium transition"
               style={{ backgroundColor: '#1a1a1a', color: '#ffffff' }}
@@ -359,7 +416,7 @@ export default function Home() {
               下載散佈圖
             </button>
             <button
-              onClick={() => exportReportCSV(results, !!config.conditionText, config.projectName)}
+              onClick={() => exportReportCSV(results, !!viewConfig.conditionText, viewConfig.projectName)}
               className="px-4 py-2 rounded-lg text-sm font-medium transition"
               style={{ backgroundColor: '#f5f5f3', color: '#1a1a1a' }}
             >
@@ -450,22 +507,24 @@ export default function Home() {
                   <span className="text-xs" style={{ color: '#c0c0c0' }}>
                     {new Date(task.created_at).toLocaleDateString('zh-TW')}
                   </span>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const taskConfig = task.config as AnalysisConfig;
-                      setConfig({
-                        ...taskConfig,
-                        projectName: '',
-                      });
-                      setFiles([]);
-                      setView('config');
-                    }}
-                    className="text-xs px-2 py-1 rounded-lg transition"
-                    style={{ color: '#1a1a1a', backgroundColor: '#f5f5f3' }}
-                  >
-                    複製設定
-                  </button>
+                  {task.mode !== 'deep' && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const taskConfig = task.config as AnalysisConfig;
+                        setConfig({
+                          ...taskConfig,
+                          projectName: '',
+                        });
+                        setFiles([]);
+                        setView('config');
+                      }}
+                      className="text-xs px-2 py-1 rounded-lg transition"
+                      style={{ color: '#1a1a1a', backgroundColor: '#f5f5f3' }}
+                    >
+                      複製設定
+                    </button>
+                  )}
                   <button
                     onClick={async (e) => {
                       e.stopPropagation();

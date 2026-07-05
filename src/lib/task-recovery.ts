@@ -1,35 +1,45 @@
 import { query } from './db';
 import { processTask } from './scoring';
 import { runDeepTask } from './deep-pipeline/orchestrator';
+import { STALE_HEARTBEAT } from './task-claim';
 
+// Resume tasks orphaned by a dead runner (spec "Startup recovery of incomplete
+// tasks"): pending tasks, plus processing tasks whose heartbeat is stale or
+// NULL. Tasks run sequentially — one at a time — to avoid stampeding the
+// OpenAI quota after a restart. Each entry point re-checks via the atomic
+// claim, so a task that a live runner picked up in the meantime is skipped.
 export async function recoverIncompleteTasks() {
+  let rows: Array<{ task_id: string; mode: string }>;
   try {
     const result = await query(
-      `SELECT task_id, mode FROM tasks WHERE status IN ('processing', 'pending')`
+      `SELECT task_id, mode FROM tasks
+       WHERE status = 'pending'
+          OR (status = 'processing'
+              AND (heartbeat_at IS NULL OR heartbeat_at < NOW() - $1::interval))
+       ORDER BY created_at`,
+      [STALE_HEARTBEAT]
     );
-
-    let recovered = 0;
-    for (const row of result.rows as Array<{ task_id: string; mode: string }>) {
-      // Light tasks: re-run scoring loop (idempotent over pending rows).
-      // Deep tasks: re-enter the orchestrator, which skips already-completed stages.
-      if (row.mode === 'deep') {
-        console.log(`Recovering deep task: ${row.task_id}`);
-        runDeepTask(row.task_id).catch((err) => {
-          console.error(`Failed to recover deep task ${row.task_id}:`, err);
-        });
-      } else {
-        console.log(`Recovering light task: ${row.task_id}`);
-        processTask(row.task_id).catch((err) => {
-          console.error(`Failed to recover light task ${row.task_id}:`, err);
-        });
-      }
-      recovered++;
-    }
-
-    if (recovered > 0) {
-      console.log(`Recovered ${recovered} incomplete task(s)`);
-    }
-  } catch {
-    // DB might not be ready yet, silently ignore
+    rows = result.rows as Array<{ task_id: string; mode: string }>;
+  } catch (err) {
+    console.error('task recovery: failed to scan for incomplete tasks', err);
+    return;
   }
+
+  if (rows.length === 0) return;
+  console.log(`task recovery: found ${rows.length} incomplete task(s)`);
+
+  for (const row of rows) {
+    try {
+      console.log(`task recovery: resuming ${row.mode} task ${row.task_id}`);
+      if (row.mode === 'deep') {
+        await runDeepTask(row.task_id);
+      } else {
+        await processTask(row.task_id);
+      }
+    } catch (err) {
+      // One broken task must not block recovery of the rest.
+      console.error(`task recovery: task ${row.task_id} failed`, err);
+    }
+  }
+  console.log('task recovery: done');
 }

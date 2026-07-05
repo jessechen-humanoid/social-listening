@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { query } from './db';
+import { query, withTransaction } from './db';
 
 // ---------------------------------------------------------------------------
 // Quantile mapping
@@ -211,9 +211,8 @@ export async function createCalibrationSet(
   input: CreateCalibrationSetInput
 ): Promise<CalibrationSet> {
   const id = uuidv4();
-  await query('BEGIN');
-  try {
-    await query(
+  await withTransaction(async (client) => {
+    await client.query(
       `INSERT INTO calibration_sets
          (id, name, brand_id, golden_model, golden_prompt_version_id, post_count, locked)
        VALUES ($1, $2, $3, $4, $5, $6, FALSE)`,
@@ -221,18 +220,14 @@ export async function createCalibrationSet(
     );
     for (let i = 0; i < input.posts.length; i++) {
       const p = input.posts[i];
-      await query(
+      await client.query(
         `INSERT INTO calibration_posts
            (id, set_id, row_index, content, platform, engagement, golden_emotion, golden_favor)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [uuidv4(), id, i, p.content, p.platform, p.engagement, p.goldenEmotion, p.goldenFavor]
       );
     }
-    await query('COMMIT');
-  } catch (err) {
-    await query('ROLLBACK');
-    throw err;
-  }
+  });
   return (await getCalibrationSet(id)) as CalibrationSet;
 }
 

@@ -40,11 +40,13 @@ const HOTCOMMENT_FIELDS: FieldSpec[] = [
   { field: 'comment_url', required: true },
 ];
 
+// comment_url is optional: real Qsearch comment exports carry no comment URL
+// column at all (observed: id, message, created_time, like_count, source, parentid).
 const COMMENTS_FROM_POSTS_FIELDS: FieldSpec[] = [
   { field: 'content', required: true },
   { field: 'engagement_value', required: true },
   { field: 'posted_at', required: true },
-  { field: 'comment_url', required: true },
+  { field: 'comment_url', required: false },
   { field: 'parent_post_url', required: true },
 ];
 
@@ -54,8 +56,17 @@ const FIELDS_BY_ROLE: Record<FileRole, FieldSpec[]> = {
   comments_from_posts: COMMENTS_FROM_POSTS_FIELDS,
 };
 
-export function getLogicalFields(role: FileRole): FieldSpec[] {
-  return FIELDS_BY_ROLE[role];
+// Valid file roles, for server-side validation of task creation input.
+export const FILE_ROLES = Object.keys(FIELDS_BY_ROLE) as FileRole[];
+
+// Platform-aware field specs: on fb, hotpost author_id becomes required —
+// the B_link parent-post matching key is author_id + '_' + permalink tail.
+export function getLogicalFields(role: FileRole, platform?: Platform): FieldSpec[] {
+  const base = FIELDS_BY_ROLE[role];
+  if (platform === 'fb' && role === 'hotpost') {
+    return base.map((f) => (f.field === 'author_id' ? { ...f, required: true } : f));
+  }
+  return base;
 }
 
 // Whether a given role + platform combination needs a forum filter
@@ -78,13 +89,14 @@ const GUESS_PATTERNS: Record<LogicalField, string[]> = {
     'reaction_count',
     'like_count',
   ],
-  posted_at: ['created_time', 'created_at', 'posted_at', 'post_time', 'time', '貼文時間'],
+  posted_at: ['created_time', 'created_at', 'posted_at', 'post_time', 'publish_time', 'time', '貼文時間'],
   post_url: ['permalink', 'post_url', 'url', 'link'],
   comment_url: ['comment_url', 'permalink', 'url', 'link'],
   parent_post_url: [
     'parent_post_url',
     'parent_permalink',
     'parent_url',
+    'parentid',
     'post_permalink',
     'post_url',
   ],
@@ -134,11 +146,12 @@ export interface MappingValidationResult {
 export function validateMapping(
   mapping: ColumnMapping,
   role: FileRole,
-  availableColumns: string[]
+  availableColumns: string[],
+  platform?: Platform
 ): MappingValidationResult {
   const columnSet = new Set(availableColumns);
   const missing: LogicalField[] = [];
-  for (const { field, required } of FIELDS_BY_ROLE[role]) {
+  for (const { field, required } of getLogicalFields(role, platform)) {
     if (!required) continue;
     const mapped = mapping[field];
     if (!mapped || !columnSet.has(mapped)) {

@@ -1,5 +1,6 @@
 "use client";
 
+import { LIGHT_MODELS } from '@/lib/analysis-models';
 import type { AnalysisConfig } from '@/lib/types';
 
 interface AnalysisConfigProps {
@@ -13,11 +14,7 @@ const BRAND_PRESET = {
   yAxis: { name: '情緒強度', zeroDescription: '平淡無情緒', tenDescription: '情緒非常激烈' },
 };
 
-const MODELS = [
-  { value: 'gpt-4o', label: 'GPT-4o' },
-  { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
-  { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo' },
-];
+const MODELS = LIGHT_MODELS;
 
 const DOT_COLORS = [
   { value: '#404040', label: '深灰' },

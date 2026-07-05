@@ -1,10 +1,14 @@
 import { query } from '@/lib/db';
 import { getStageProgress } from '@/lib/deep-pipeline/orchestrator';
+import { requireSession } from '@/lib/require-session';
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const { response: authResponse } = await requireSession();
+  if (authResponse) return authResponse;
+
   try {
     const { id: taskId } = await params;
 

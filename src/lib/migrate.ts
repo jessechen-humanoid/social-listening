@@ -102,6 +102,9 @@ export async function migrate() {
   await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS sheet_sync_status TEXT`);
   await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS sheet_sync_error TEXT`);
   await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS platform TEXT`);
+  // Execution lease for the single-runner claim: NULL means the row predates
+  // this column (legacy) and is treated as claimable.
+  await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ`);
 
   // Add FK on tasks.brand_id (no IF NOT EXISTS for ALTER TABLE ADD CONSTRAINT)
   await query(`
@@ -164,6 +167,8 @@ export async function migrate() {
   await query(`ALTER TABLE task_results ADD COLUMN IF NOT EXISTS tag_friend BOOLEAN`);
   await query(`ALTER TABLE task_results ADD COLUMN IF NOT EXISTS filtered_out BOOLEAN`);
   await query(`ALTER TABLE task_results ADD COLUMN IF NOT EXISTS posted_at TIMESTAMPTZ`);
+  // Post author id (FB): material for the B_link parent-post matching key.
+  await query(`ALTER TABLE task_results ADD COLUMN IF NOT EXISTS author_id TEXT`);
   await query(`ALTER TABLE task_results ADD COLUMN IF NOT EXISTS post_url TEXT`);
   await query(`ALTER TABLE task_results ADD COLUMN IF NOT EXISTS parent_post_url TEXT`);
   await query(`ALTER TABLE task_results ADD COLUMN IF NOT EXISTS platform TEXT`);

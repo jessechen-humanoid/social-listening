@@ -6,6 +6,7 @@ import { getPromptByVersionId, getTaskPromptBindings } from '../prompt-versions'
 import type { DeepStageName } from '../seed-prompts';
 import type { FileRole, ColumnMapping } from '../column-mapping';
 import { applyTaskCalibration } from '../calibration';
+import { claimTask, createHeartbeat } from '../task-claim';
 import { aggregateDeepTask } from './aggregate';
 import { syncDeepTaskWithRetry } from '../google-sheets';
 import {
@@ -117,13 +118,14 @@ export async function initializeDeepTask(input: {
       const parentPostUrl = m.parent_post_url
         ? toStringOrNull(row[m.parent_post_url])
         : null;
+      const authorId = m.author_id ? toStringOrNull(row[m.author_id]) : null;
 
       await query(
         `INSERT INTO task_results
            (result_id, task_id, file_id, row_index, content_text,
-            engagement_value, posted_at, post_url, parent_post_url, platform,
-            stage_name, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending')`,
+            engagement_value, posted_at, post_url, parent_post_url, author_id,
+            platform, stage_name, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending')`,
         [
           uuidv4(),
           input.taskId,
@@ -136,6 +138,7 @@ export async function initializeDeepTask(input: {
           // it's the post's URL. Both share the column.
           bucket === 'A' ? postUrl : commentUrl ?? postUrl,
           parentPostUrl,
+          authorId,
           input.platform,
           bucket,
         ]
@@ -161,6 +164,12 @@ export async function initializeDeepTask(input: {
 // Run pending stages for a task. Picks up where it left off (idempotent).
 // Stages already marked 'completed' are skipped.
 export async function runDeepTask(taskId: string): Promise<void> {
+  // Single-runner claim: if another live runner holds this task, do nothing.
+  if (!(await claimTask(taskId))) {
+    console.log(`Task ${taskId} is held by another runner, skipping`);
+    return;
+  }
+
   const taskRow = await query(
     `SELECT brand_id, platform FROM tasks WHERE task_id = $1`,
     [taskId]
@@ -180,13 +189,11 @@ export async function runDeepTask(taskId: string): Promise<void> {
   const brandName = (brandRow.rows[0] as { name: string }).name;
 
   const prompts = await loadPromptBindings(taskId);
-  const ctx: StageContext = { taskId, brandName, prompts };
+  const heartbeat = createHeartbeat(taskId);
+  const ctx: StageContext = { taskId, brandName, prompts, heartbeat };
 
+  // Claim already set status = 'processing' and stamped heartbeat_at.
   const stages = pipelineStagesForPlatform(platform);
-  await query(
-    `UPDATE tasks SET status = 'processing', updated_at = NOW() WHERE task_id = $1`,
-    [taskId]
-  );
 
   try {
     for (const stage of stages) {

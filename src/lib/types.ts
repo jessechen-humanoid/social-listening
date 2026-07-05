@@ -12,6 +12,9 @@ export interface UploadedFile {
   data: Record<string, unknown>[];
   // Deep mode: which role slot this file occupies. Undefined for light mode.
   role?: FileRole;
+  // Multi-sheet workbooks: all sheet names and the one currently parsed.
+  sheetNames?: string[];
+  selectedSheet?: string | null;
 }
 
 // Light mode (existing) — Brand or Custom analysis with user-defined axes.

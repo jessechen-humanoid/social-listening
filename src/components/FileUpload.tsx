@@ -31,8 +31,34 @@ function rolesForPlatform(platform: Platform): FileRole[] {
   return ['hotpost'];
 }
 
-async function buildUploadedFile(file: File, role?: FileRole): Promise<UploadedFile> {
-  const parsed = await parseFile(file);
+// Qsearch multi-sheet workbooks name their sheets by platform; pick the sheet
+// matching the task's platform by default (fb→FB, dcard→FORUM, case-insensitive).
+const PLATFORM_SHEET_ALIASES: Record<Platform, string[]> = {
+  fb: ['fb', 'facebook'],
+  ig: ['ig', 'instagram'],
+  threads: ['threads'],
+  dcard: ['forum', 'dcard'],
+};
+
+function defaultSheetForPlatform(sheetNames: string[], platform?: Platform): string | undefined {
+  if (!platform) return undefined;
+  const aliases = PLATFORM_SHEET_ALIASES[platform] ?? [];
+  return sheetNames.find(s => aliases.includes(s.toLowerCase()));
+}
+
+async function buildUploadedFile(
+  file: File,
+  role?: FileRole,
+  platform?: Platform,
+  sheetName?: string
+): Promise<UploadedFile> {
+  let parsed = await parseFile(file, sheetName);
+  if (!sheetName && parsed.sheetNames.length > 1) {
+    const preferred = defaultSheetForPlatform(parsed.sheetNames, platform);
+    if (preferred && preferred !== parsed.selectedSheet) {
+      parsed = await parseFile(file, preferred);
+    }
+  }
   const cols = parsed.columns;
   const autoContent = cols.find(c => c.toLowerCase().includes('content')) || '';
   const autoEngagement = cols.find(c => c.toLowerCase().includes('like_count')) || '';
@@ -46,6 +72,8 @@ async function buildUploadedFile(file: File, role?: FileRole): Promise<UploadedF
     engagementColumn: autoEngagement,
     data: parsed.data,
     role,
+    sheetNames: parsed.sheetNames,
+    selectedSheet: parsed.selectedSheet,
   };
 }
 
@@ -94,13 +122,26 @@ export default function FileUpload({ files, onChange, mode = 'light', platform }
       return;
     }
     try {
-      const uploaded = await buildUploadedFile(file, role);
+      const uploaded = await buildUploadedFile(file, role, platform);
       // One file per role: replace any existing file in the slot.
       onChange([...files.filter(f => f.role !== role), uploaded]);
     } catch (err) {
       alert(err instanceof Error ? err.message : '檔案解析失敗');
     }
-  }, [files, onChange]);
+  }, [files, onChange, platform]);
+
+  // Multi-sheet workbooks: re-parse the original file with the chosen sheet,
+  // keeping the same UploadedFile id so downstream mapping state stays attached.
+  const handleSheetChange = useCallback(async (id: string, sheetName: string) => {
+    const existing = files.find(f => f.id === id);
+    if (!existing) return;
+    try {
+      const reparsed = await buildUploadedFile(existing.file, existing.role, platform, sheetName);
+      onChange(files.map(f => (f.id === id ? { ...reparsed, id } : f)));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '工作表切換失敗');
+    }
+  }, [files, onChange, platform]);
 
   if (mode === 'deep') {
     if (!platform) {
@@ -123,6 +164,7 @@ export default function FileUpload({ files, onChange, mode = 'light', platform }
               file={slotFile}
               onUpload={handleSlotUpload}
               onRemove={handleRemove}
+              onSheetChange={handleSheetChange}
             />
           );
         })}
@@ -227,9 +269,10 @@ interface RoleSlotProps {
   file?: UploadedFile;
   onUpload: (role: FileRole, file: File) => void;
   onRemove: (id: string) => void;
+  onSheetChange: (id: string, sheetName: string) => void;
 }
 
-function RoleSlot({ role, file, onUpload, onRemove }: RoleSlotProps) {
+function RoleSlot({ role, file, onUpload, onRemove, onSheetChange }: RoleSlotProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleDrop = (e: React.DragEvent) => {
@@ -259,9 +302,24 @@ function RoleSlot({ role, file, onUpload, onRemove }: RoleSlotProps) {
       </div>
 
       {file ? (
-        <div className="text-xs space-y-1" style={{ color: '#6b6b6b' }}>
+        <div className="text-xs space-y-2" style={{ color: '#6b6b6b' }}>
           <div style={{ color: '#1a1a1a' }}>{file.filename}</div>
           <div>{file.rowCount} 列 · {file.columns.length} 個欄位</div>
+          {(file.sheetNames?.length ?? 0) > 1 && (
+            <div className="flex items-center gap-2">
+              <label className="text-xs" style={{ color: '#6b6b6b' }}>工作表</label>
+              <select
+                value={file.selectedSheet ?? ''}
+                onChange={e => onSheetChange(file.id, e.target.value)}
+                className="rounded-lg px-2 py-1 text-xs focus:ring-2 focus:ring-[#2d2d2d] focus:outline-none"
+                style={{ border: '1px solid #e8e8e5', backgroundColor: '#ffffff', color: '#1a1a1a' }}
+              >
+                {file.sheetNames!.map(name => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
       ) : (
         <div

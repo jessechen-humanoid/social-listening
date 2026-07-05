@@ -2,12 +2,16 @@ import { query } from '../db';
 import type { PromptVersion } from '../prompt-versions';
 import { DEEP_STAGES, type DeepStageName } from '../seed-prompts';
 import { callJson, fillPlaceholders, parseScore, parseBoolFlag } from './openai-client';
+import { parentKey, postKey } from '../fb-post-key';
 
 export interface StageContext {
   taskId: string;
   brandName: string;
   // stage_name -> active prompt version bound to this task at start time
   prompts: Map<DeepStageName, PromptVersion>;
+  // Throttled execution heartbeat; stage loops call it before each AI call so
+  // the task's lease stays fresh while waiting on OpenAI.
+  heartbeat?: () => Promise<void>;
 }
 
 export interface StageOutcome {
@@ -47,6 +51,7 @@ export async function runStageARelatedFilter(ctx: StageContext): Promise<StageOu
       brand: ctx.brandName,
       content: row.content_text || '',
     });
+    await ctx.heartbeat?.();
     try {
       const result = await callJson<Record<string, unknown>>({ prompt, userMessage });
       const score = parseScore(result['關聯性分數']);
@@ -94,6 +99,7 @@ export async function runStageAEmotionFavor(ctx: StageContext): Promise<StageOut
       brand: ctx.brandName,
       content: row.content_text || '',
     });
+    await ctx.heartbeat?.();
     try {
       const result = await callJson<Record<string, unknown>>({ prompt, userMessage });
       const emotion = parseScore(result['情緒分數']);
@@ -136,18 +142,42 @@ export async function runStageAEmotionFavor(ctx: StageContext): Promise<StageOut
 // post passed stage A. Marks filtered_out=true on orphans.
 // ---------------------------------------------------------------------------
 
+// Origin: link_A_to_B.py —「重要濾除：抽獎文的配對沒有意義」. Comments whose
+// parent post mentions giveaways are noise and are excluded from analysis.
+const GIVEAWAY_KEYWORD = '抽獎';
+
 export async function runStageBLink(ctx: StageContext): Promise<StageOutcome> {
   const passedPosts = await query(
-    `SELECT DISTINCT post_url
+    `SELECT post_url, author_id, content_text
      FROM task_results
      WHERE task_id = $1 AND stage_name = 'A'
        AND filtered_out = FALSE
        AND post_url IS NOT NULL`,
     [ctx.taskId]
   );
-  const passedSet = new Set<string>(
-    (passedPosts.rows as Array<{ post_url: string }>).map((r) => r.post_url)
-  );
+
+  // Each post is reachable by its raw URL (backwards compatibility) and by
+  // its normalized key (Python link_A_to_B.py parity): real Qsearch exports
+  // reference parents as {author_id}_{post_id} while post permalinks use
+  // other shapes (e.g. /reel/{post_id}/), so raw URL equality alone matches nothing.
+  interface PostRef {
+    postUrl: string;
+    giveaway: boolean;
+  }
+  const postByKey = new Map<string, PostRef>();
+  for (const p of passedPosts.rows as Array<{
+    post_url: string;
+    author_id: string | null;
+    content_text: string | null;
+  }>) {
+    const ref: PostRef = {
+      postUrl: p.post_url,
+      giveaway: (p.content_text ?? '').includes(GIVEAWAY_KEYWORD),
+    };
+    postByKey.set(p.post_url, ref);
+    const key = postKey(p.author_id, p.post_url);
+    if (key) postByKey.set(key, ref);
+  }
 
   const stageB = await query(
     `SELECT result_id, parent_post_url
@@ -156,16 +186,36 @@ export async function runStageBLink(ctx: StageContext): Promise<StageOutcome> {
     [ctx.taskId]
   );
 
+  let matched = 0;
   let kept = 0;
   for (const row of stageB.rows as Array<{ result_id: string; parent_post_url: string | null }>) {
-    const orphan = !row.parent_post_url || !passedSet.has(row.parent_post_url);
+    const ref = row.parent_post_url
+      ? postByKey.get(row.parent_post_url) ?? postByKey.get(parentKey(row.parent_post_url))
+      : undefined;
+
+    if (!ref) {
+      await query(
+        `UPDATE task_results SET filtered_out = TRUE, status = 'B_link_done' WHERE result_id = $1`,
+        [row.result_id]
+      );
+      continue;
+    }
+
+    matched++;
+    // Rewrite parent_post_url to the matched post's canonical URL so downstream
+    // URL joins (B_emotion_favor) keep working unchanged. Giveaway-post comments
+    // are excluded here, exactly like the Python pipeline's pre-pairing skip.
     await query(
-      `UPDATE task_results SET filtered_out = $1, status = 'B_link_done' WHERE result_id = $2`,
-      [orphan, row.result_id]
+      `UPDATE task_results SET filtered_out = $1, parent_post_url = $2, status = 'B_link_done'
+       WHERE result_id = $3`,
+      [ref.giveaway, ref.postUrl, row.result_id]
     );
-    if (!orphan) kept++;
+    if (!ref.giveaway) kept++;
   }
 
+  console.log(
+    `B_link (${ctx.taskId}): ${matched}/${stageB.rows.length} comments matched, ${kept} kept after giveaway filter`
+  );
   return { inputCount: stageB.rows.length, outputCount: kept };
 }
 
@@ -192,6 +242,7 @@ export async function runStageBTagFriendFilter(ctx: StageContext): Promise<Stage
     const userMessage = fillPlaceholders(prompt.prompt_text, {
       message: row.content_text || '',
     });
+    await ctx.heartbeat?.();
     try {
       const result = await callJson<Record<string, unknown>>({ prompt, userMessage });
       const tagFriend = parseBoolFlag(result['Tag_Friend']);
@@ -262,6 +313,7 @@ export async function runStageBEmotionFavor(ctx: StageContext): Promise<StageOut
   for (const [, group] of groups) {
     for (let i = 0; i < group.length; i += COMMENT_BATCH_SIZE) {
       const batch = group.slice(i, i + COMMENT_BATCH_SIZE);
+      await ctx.heartbeat?.();
       const ok = await scoreCommentBatch(prompt, ctx.brandName, batch);
       outputCount += ok;
     }
@@ -403,6 +455,7 @@ export async function runStageCEmotionFavor(ctx: StageContext): Promise<StageOut
       brand: ctx.brandName,
       comment: row.content_text || '',
     });
+    await ctx.heartbeat?.();
     try {
       const result = await callJson<Record<string, unknown>>({ prompt, userMessage });
       const related = parseScore(result['關聯性分數']);
