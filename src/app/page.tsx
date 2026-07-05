@@ -8,8 +8,11 @@ import ColumnMappingStep, { type ConfirmedMappings } from '@/components/ColumnMa
 import ScatterPlot, { exportScatterPlotPNG, computeQuadrantCounts } from '@/components/ScatterPlot';
 import ProgressBar from '@/components/ProgressBar';
 import WeeklyTimeline from '@/components/WeeklyTimeline';
+import JSZip from 'jszip';
 import { exportReportCSV } from '@/lib/export-report';
 import { getBrowserUuid } from '@/lib/browser-uuid';
+import { REQUIRED_ROLES_BY_PLATFORM } from '@/lib/validate-task-input';
+import type { Platform } from '@/lib/platforms';
 import type {
   UploadedFile,
   AnalysisConfig,
@@ -35,12 +38,23 @@ const DEFAULT_DEEP_CONFIG: DeepAnalysisConfig = {
   projectName: '',
   brandId: '',
   brandName: '',
-  platform: 'fb',
   timeRangeStart: '',
   timeRangeEnd: '',
 };
 
-type ViewState = 'config' | 'deep-config' | 'deep-mapping' | 'processing' | 'results' | 'history';
+type ViewState = 'config' | 'deep-config' | 'deep-mapping' | 'processing' | 'results' | 'batch-results' | 'history';
+
+const PLATFORM_ORDER = ['fb', 'ig', 'threads', 'dcard'] as const;
+const PLATFORM_DISPLAY: Record<string, string> = {
+  fb: 'Facebook', ig: 'Instagram', threads: 'Threads', dcard: '論壇（Dcard）',
+};
+
+interface BatchItem {
+  taskId: string;
+  platform: string;
+  progress: TaskProgress;
+  results: TaskResult[];
+}
 
 export default function Home() {
   const [view, setView] = useState<ViewState>('config');
@@ -52,6 +66,8 @@ export default function Home() {
   // from the light form `config` so viewing a deep task (whose config has no
   // xAxis/yAxis) never pollutes or crashes the form state.
   const [viewConfig, setViewConfig] = useState<AnalysisConfig>(DEFAULT_CONFIG);
+  const [viewedBatch, setViewedBatch] = useState<{ title: string; items: BatchItem[] } | null>(null);
+  const [downloadingBatch, setDownloadingBatch] = useState(false);
   const [progress, setProgress] = useState<TaskProgress | null>(null);
   const [results, setResults] = useState<TaskResult[]>([]);
   const [history, setHistory] = useState<TaskProgress[]>([]);
@@ -149,45 +165,60 @@ export default function Home() {
     }
   };
 
-  // Deep mode: validate config, then move to mapping step
+  // Deep batch: platforms that have files must each satisfy their role set
+  // (spec "Platform role completeness validation" — client side mirror).
+  const deepFiles = files.filter(f => f.platform && f.role);
+  const platformsWithFiles = Array.from(new Set(deepFiles.map(f => f.platform as Platform)));
+  const missingRolesByPlatform = platformsWithFiles.flatMap(platform => {
+    const present = new Set(deepFiles.filter(f => f.platform === platform).map(f => f.role));
+    return REQUIRED_ROLES_BY_PLATFORM[platform]
+      .filter(role => !present.has(role))
+      .map(role => ({ platform, role }));
+  });
   const canProceedToDeepMapping =
     !!deepConfig.brandId &&
-    !!deepConfig.platform &&
     !!deepConfig.timeRangeStart &&
     !!deepConfig.timeRangeEnd &&
-    files.length > 0 &&
-    (deepConfig.platform !== 'fb' || files.length === 3);
+    platformsWithFiles.length > 0 &&
+    missingRolesByPlatform.length === 0;
 
   const handleStartDeepAnalysis = async (mappings: ConfirmedMappings) => {
     if (submitting) return;
     setSubmitting(true);
     try {
-      const filesPayload = files.map((f) => {
-        const m = mappings.perFile.find((x) => x.fileId === f.id);
-        return {
-          filename: f.filename,
-          role: f.role,
-          columnMapping: m?.mapping ?? {},
-          data: f.data,
-          forumFilter:
-            f.role === 'hotpost' && deepConfig.platform === 'dcard'
-              ? mappings.forumFilter
-              : null,
-        };
-      });
+      // Expand each slot's shared mapping onto its files, grouped per platform
+      // (spec "Batch upload creates one task per platform").
+      const platforms = platformsWithFiles.map(platform => ({
+        platform,
+        files: deepFiles
+          .filter(f => f.platform === platform)
+          .map(f => {
+            const slot = mappings.perSlot.find(
+              m => m.platform === platform && m.role === f.role
+            );
+            return {
+              filename: f.filename,
+              role: f.role,
+              columnMapping: slot?.mapping ?? {},
+              data: f.data,
+              forumFilter:
+                platform === 'dcard' && f.role === 'hotpost' ? mappings.forumFilter : null,
+            };
+          }),
+      }));
 
       const res = await fetch('/api/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           browserUuid,
-          mode: 'deep',
+          mode: 'deep-batch',
           config: deepConfig,
-          files: filesPayload,
+          platforms,
         }),
       });
       const data = await res.json();
-      if (data.task_id) {
+      if (Array.isArray(data.tasks) && data.tasks.length > 0) {
         setFiles([]);
         setDeepConfig(DEFAULT_DEEP_CONFIG);
         fetchHistory();
@@ -239,6 +270,78 @@ export default function Home() {
         setView('results');
       }
     } catch { /* ignore */ }
+  };
+
+  // Open a batch card: load every platform task's progress + results and
+  // show the per-platform sections on one page.
+  const handleViewBatch = async (tasks: TaskProgress[], title: string) => {
+    const seq = ++viewSeqRef.current;
+    try {
+      const items = await Promise.all(
+        tasks.map(async (t) => {
+          const [progressRes, resultsRes] = await Promise.all([
+            fetch(`/api/tasks/${t.task_id}/progress`),
+            fetch(`/api/tasks/${t.task_id}/results`),
+          ]);
+          const [progress, resultsData] = await Promise.all([
+            progressRes.json(),
+            resultsRes.json(),
+          ]);
+          return {
+            taskId: t.task_id,
+            platform: String(t.platform ?? ''),
+            progress,
+            results: resultsData.results || [],
+          } as BatchItem;
+        })
+      );
+      if (seq !== viewSeqRef.current) return;
+      items.sort(
+        (a, b) =>
+          PLATFORM_ORDER.indexOf(a.platform as (typeof PLATFORM_ORDER)[number]) -
+          PLATFORM_ORDER.indexOf(b.platform as (typeof PLATFORM_ORDER)[number])
+      );
+      setViewedBatch({ title, items });
+      setView('batch-results');
+    } catch { /* ignore */ }
+  };
+
+  // One zip for the whole batch: per-platform scatter PNG + timeline PNG
+  // (serialized from the rendered canvases) + the task's full xlsx report.
+  const handleDownloadBatch = async () => {
+    if (!viewedBatch || downloadingBatch) return;
+    setDownloadingBatch(true);
+    try {
+      const zip = new JSZip();
+      for (const item of viewedBatch.items) {
+        const dir = item.platform.toUpperCase();
+        const section = document.querySelector(`div[data-batch-platform="${item.platform}"]`);
+        for (const [tag, name] of [
+          ['scatter', 'scatter.png'],
+          ['timeline', 'weekly-timeline.png'],
+        ] as const) {
+          const canvas = section?.querySelector<HTMLCanvasElement>(`canvas[data-chart="${tag}"]`);
+          if (canvas) {
+            zip.file(`${dir}/${name}`, canvas.toDataURL('image/png').split(',')[1], { base64: true });
+          }
+        }
+        const xlsxRes = await fetch(`/api/tasks/${item.taskId}/export-xlsx`);
+        if (xlsxRes.ok) {
+          zip.file(`${dir}/report.xlsx`, await xlsxRes.blob());
+        }
+      }
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${viewedBatch.title}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '打包失敗');
+    } finally {
+      setDownloadingBatch(false);
+    }
   };
 
   // Poll the task being viewed while on the processing view; switch to the
@@ -319,8 +422,14 @@ export default function Home() {
             files={files}
             onChange={setFiles}
             mode="deep"
-            platform={deepConfig.platform}
           />
+          {missingRolesByPlatform.length > 0 && (
+            <p className="text-xs" style={{ color: '#c75c5c' }}>
+              {missingRolesByPlatform
+                .map(({ platform, role }) => `${platform.toUpperCase()} 缺少角色：${role}`)
+                .join('；')}
+            </p>
+          )}
           <button
             onClick={() => setView('deep-mapping')}
             disabled={!canProceedToDeepMapping}
@@ -336,7 +445,6 @@ export default function Home() {
       {view === 'deep-mapping' && (
         <ColumnMappingStep
           files={files}
-          platform={deepConfig.platform}
           onBack={() => setView('deep-config')}
           onConfirm={handleStartDeepAnalysis}
         />
@@ -418,7 +526,7 @@ export default function Home() {
                   yAxisName={viewConfig.yAxis.name}
                   conditionFilterEnabled={viewConfig.conditionFilterEnabled}
                   conditionText={viewConfig.conditionText}
-                  dotColor={viewConfig.dotColor}
+                  dotColor={isDeep ? '#0000FF' : viewConfig.dotColor}
                   weighted={isDeep}
                   platformAlpha={isDeep ? progress?.platform_settings?.scatter_alpha ?? undefined : undefined}
                 />
@@ -427,10 +535,20 @@ export default function Home() {
                   <span>{viewConfig.mode === 'brand' ? `理性粉絲 ${pct[3]}%` : `${pct[3]}%`}</span>
                 </div>
                 {isDeep && (
-                  <WeeklyTimeline
-                    buckets={agg?.weekly_buckets ?? []}
-                    title="逐週聲量（正面 / 負面）"
-                  />
+                  <>
+                    {(() => {
+                      const n = results.filter(r => r.status === 'unscorable').length;
+                      return n > 0 ? (
+                        <p className="text-xs" style={{ color: '#6b6b6b' }}>
+                          無法評分 {n} 則（模型拒評，已完整列入 XLSX 報表供人工判讀）
+                        </p>
+                      ) : null;
+                    })()}
+                    <WeeklyTimeline
+                      buckets={agg?.weekly_buckets ?? []}
+                      title="逐週聲量（正面 / 負面）"
+                    />
+                  </>
                 )}
               </>
             );
@@ -512,6 +630,76 @@ export default function Home() {
         </div>
       )}
 
+      {/* Batch results view: one section per platform task */}
+      {view === 'batch-results' && viewedBatch && (
+        <div className="space-y-8">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-medium" style={{ color: '#1a1a1a' }}>
+              {viewedBatch.title}
+            </h2>
+            <button
+              onClick={handleDownloadBatch}
+              disabled={downloadingBatch}
+              className="px-4 py-2 rounded-lg text-sm font-medium transition disabled:opacity-40"
+              style={{ backgroundColor: '#1a1a1a', color: '#ffffff' }}
+            >
+              {downloadingBatch ? '打包中…' : '下載全部（圖表 + 報表）'}
+            </button>
+          </div>
+
+          {viewedBatch.items.map(item => {
+            const agg = item.progress.aggregates?.[0];
+            const q = agg?.quadrants;
+            const pct = q ? [q.tl, q.tr, q.bl, q.br].map(v => Math.round(v)) : [0, 0, 0, 0];
+            const alpha = item.progress.platform_settings?.scatter_alpha ?? undefined;
+            return (
+              <div
+                key={item.taskId}
+                data-batch-platform={item.platform}
+                className="space-y-3 rounded-xl p-5"
+                style={{ backgroundColor: '#ffffff', border: '1px solid #e8e8e5' }}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium" style={{ color: '#1a1a1a' }}>
+                    {PLATFORM_DISPLAY[item.platform] ?? item.platform}
+                  </span>
+                  <span className="text-xs" style={{ color: '#6b6b6b' }}>
+                    樣本 {agg?.sample_count ?? 0} 則
+                    {(() => {
+                      const n = item.results.filter(r => r.status === 'unscorable').length;
+                      return n > 0 ? `・無法評分 ${n} 則（已列入報表供人工判讀）` : '';
+                    })()}
+                    {item.progress.status !== 'completed' && `・${item.progress.status === 'error' ? '分析失敗' : '分析中'}`}
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm" style={{ color: '#6b6b6b' }}>
+                  <span>超級黑粉 {pct[0]}%</span>
+                  <span>超級鐵粉 {pct[1]}%</span>
+                </div>
+                <ScatterPlot
+                  results={item.results}
+                  xAxisName="品牌好感度"
+                  yAxisName="情緒強度"
+                  conditionFilterEnabled={false}
+                  conditionText=""
+                  dotColor="#0000FF"
+                  weighted
+                  platformAlpha={alpha}
+                />
+                <div className="flex justify-between text-sm" style={{ color: '#6b6b6b' }}>
+                  <span>理性黑粉 {pct[2]}%</span>
+                  <span>理性粉絲 {pct[3]}%</span>
+                </div>
+                <WeeklyTimeline
+                  buckets={agg?.weekly_buckets ?? []}
+                  title={`逐週聲量（${PLATFORM_DISPLAY[item.platform] ?? item.platform}）`}
+                />
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* History view */}
       {view === 'history' && (
         <div className="space-y-3">
@@ -520,7 +708,90 @@ export default function Home() {
               尚無分析紀錄
             </p>
           )}
-          {history.map(task => (
+          {(() => {
+            // Group batch tasks into one card per batch_id; legacy tasks stay solo.
+            const byBatch = new Map<string, TaskProgress[]>();
+            for (const t of history) {
+              if (t.batch_id) {
+                if (!byBatch.has(t.batch_id)) byBatch.set(t.batch_id, []);
+                byBatch.get(t.batch_id)!.push(t);
+              }
+            }
+            const seenBatch = new Set<string>();
+            const entries: Array<
+              | { type: 'single'; task: TaskProgress }
+              | { type: 'batch'; batchId: string; title: string; tasks: TaskProgress[] }
+            > = [];
+            for (const t of history) {
+              if (t.batch_id) {
+                if (seenBatch.has(t.batch_id)) continue;
+                seenBatch.add(t.batch_id);
+                const tasks = byBatch.get(t.batch_id)!;
+                const dc = tasks[0].config as unknown as DeepAnalysisConfig;
+                entries.push({
+                  type: 'batch',
+                  batchId: t.batch_id,
+                  title: dc?.projectName || dc?.brandName || '深度批次',
+                  tasks,
+                });
+              } else {
+                entries.push({ type: 'single', task: t });
+              }
+            }
+            return entries.map(entry => {
+              if (entry.type === 'batch') {
+                const total = entry.tasks.reduce((sum, t) => sum + t.total_items, 0);
+                return (
+                  <div
+                    key={entry.batchId}
+                    className="rounded-xl p-5 cursor-pointer transition"
+                    style={{ backgroundColor: '#ffffff', border: '1px solid #e8e8e5' }}
+                    onClick={() => handleViewBatch(entry.tasks, entry.title)}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-sm font-medium" style={{ color: '#1a1a1a' }}>
+                          {entry.title}
+                        </span>
+                        <span className="text-xs ml-3" style={{ color: '#6b6b6b' }}>
+                          {total} 則・{entry.tasks.length} 平台
+                        </span>
+                      </div>
+                      <span className="text-xs" style={{ color: '#c0c0c0' }}>
+                        {new Date(entry.tasks[0].created_at).toLocaleDateString('zh-TW')}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-2 mt-3">
+                      {entry.tasks.map(t => {
+                        const pctDone = t.total_items > 0
+                          ? Math.round((t.completed_items / t.total_items) * 100)
+                          : 0;
+                        return (
+                          <span
+                            key={t.task_id}
+                            className="text-xs px-2 py-1 rounded-lg"
+                            style={{
+                              backgroundColor:
+                                t.status === 'completed' ? '#e8f0e8'
+                                : t.status === 'error' ? '#fef0f0' : '#fef9ef',
+                              color:
+                                t.status === 'completed' ? '#2d5a2d'
+                                : t.status === 'error' ? '#c75c5c' : '#8a6d3b',
+                            }}
+                          >
+                            {(t.platform ?? '').toUpperCase()}{' '}
+                            {t.status === 'completed' ? '✓'
+                              : t.status === 'error' ? '✗'
+                              : t.status === 'processing' ? `${pctDone}%` : '等待中'}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              }
+              const task = entry.task;
+              return (
             <div
               key={task.task_id}
               className="rounded-xl p-5 cursor-pointer transition"
@@ -530,11 +801,15 @@ export default function Home() {
               <div className="flex items-center justify-between">
                 <div>
                   <span className="text-sm font-medium" style={{ color: '#1a1a1a' }}>
-                    {(task.config as AnalysisConfig)?.projectName
-                      ? `${(task.config as AnalysisConfig).projectName}：`
-                      : ''}
-                    {(task.config as AnalysisConfig)?.xAxis?.name || '好感度'} ×{' '}
-                    {(task.config as AnalysisConfig)?.yAxis?.name || '情緒強度'}
+                    {task.mode === 'deep'
+                      ? (() => {
+                          const dc = task.config as unknown as DeepAnalysisConfig;
+                          const title = dc?.projectName || dc?.brandName || '深度分析';
+                          return `${title}・${(dc?.platform ?? '').toUpperCase()}`;
+                        })()
+                      : `${(task.config as AnalysisConfig)?.projectName
+                          ? `${(task.config as AnalysisConfig).projectName}：`
+                          : ''}${(task.config as AnalysisConfig)?.xAxis?.name || '好感度'} × ${(task.config as AnalysisConfig)?.yAxis?.name || '情緒強度'}`}
                   </span>
                   <span className="text-xs ml-3" style={{ color: '#6b6b6b' }}>
                     {task.total_items} 則
@@ -608,7 +883,9 @@ export default function Home() {
                 </div>
               )}
             </div>
-          ))}
+              );
+            });
+          })()}
         </div>
       )}
     </div>

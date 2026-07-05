@@ -4,13 +4,6 @@ import { useEffect, useState } from 'react';
 import type { DeepAnalysisConfig, BrandSummary, PromptVersionSummary } from '@/lib/types';
 import type { Platform } from '@/lib/platforms';
 
-const PLATFORMS: Array<{ value: Platform; label: string }> = [
-  { value: 'fb', label: 'Facebook' },
-  { value: 'ig', label: 'Instagram' },
-  { value: 'threads', label: 'Threads' },
-  { value: 'dcard', label: 'Dcard' },
-];
-
 interface DeepConfigProps {
   config: DeepAnalysisConfig;
   onChange: (config: DeepAnalysisConfig) => void;
@@ -150,33 +143,6 @@ export default function DeepConfig({ config, onChange }: DeepConfigProps) {
         </div>
       </div>
 
-      {/* Platform */}
-      <div>
-        <label className="text-sm font-medium mb-2 block" style={{ color: '#1a1a1a' }}>
-          平台 <span style={{ color: '#c75c5c' }}>*</span>
-        </label>
-        <div className="flex gap-2">
-          {PLATFORMS.map((p) => (
-            <button
-              key={p.value}
-              onClick={() => update('platform', p.value)}
-              className="flex-1 px-3 py-2 rounded-lg text-sm transition"
-              style={
-                config.platform === p.value
-                  ? { backgroundColor: '#1a1a1a', color: '#ffffff' }
-                  : {
-                      backgroundColor: '#ffffff',
-                      color: '#6b6b6b',
-                      border: '1px solid #e8e8e5',
-                    }
-              }
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
       {/* Time range */}
       <div className="grid grid-cols-2 gap-3">
         <div>
@@ -221,13 +187,13 @@ export default function DeepConfig({ config, onChange }: DeepConfigProps) {
       </div>
 
       {/* Prompt version overrides */}
-      {config.platform && (
+      {(
         <div>
           <label className="text-sm font-medium mb-2 block" style={{ color: '#1a1a1a' }}>
-            Prompt 版本（預設使用各 stage 的 active 版本）
+            Prompt 版本（預設使用各 stage 的 active 版本；FB 以外的平台只用 A 系列）
           </label>
           <div className="space-y-2">
-            {stagesForPlatform(config.platform).map((stage) => {
+            {stagesForPlatform('fb').map((stage) => {
               const versions = prompts.filter((v) => v.stage_name === stage);
               const active = versions.find((v) => v.active);
               return (

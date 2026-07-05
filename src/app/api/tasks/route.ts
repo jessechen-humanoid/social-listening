@@ -2,7 +2,13 @@ import { query } from '@/lib/db';
 import { migrate } from '@/lib/migrate';
 import { requireSession } from '@/lib/require-session';
 import { processTask } from '@/lib/scoring';
-import { MAX_BODY_BYTES, validateTaskInput } from '@/lib/validate-task-input';
+import {
+  MAX_BODY_BYTES,
+  validateBatchInput,
+  validateTaskInput,
+  type BatchPlatformGroup,
+} from '@/lib/validate-task-input';
+import { runBatch } from '@/lib/deep-pipeline/batch-runner';
 import {
   DeepTaskValidationError,
   validateDeepTaskFields,
@@ -35,6 +41,59 @@ function deepStagesForPlatform(platform: Platform): Array<typeof ALL_DEEP_STAGES
   return ALL_DEEP_STAGES.filter((s) => s.startsWith('A_'));
 }
 
+// Create one deep task (tasks row + prompt bindings + rows). Shared by the
+// single-platform path and the multi-platform batch fan-out. Does NOT start
+// execution — callers decide (single: immediately; batch: sequential runner).
+async function createDeepTask(
+  browserUuid: string,
+  config: Record<string, unknown>,
+  platform: Platform,
+  files: DeepFileInput[],
+  batchId: string | null = null
+): Promise<{ taskId: string; totalItems: number; stages: string[] }> {
+  const taskId = uuidv4();
+  const stages = deepStagesForPlatform(platform);
+
+  // Allow per-stage prompt version override; otherwise use the active version.
+  const stageBindings = await getDefaultStageBindings(stages);
+  if (config.promptVersionOverrides && typeof config.promptVersionOverrides === 'object') {
+    for (const stage of stages) {
+      const override = (config.promptVersionOverrides as Record<string, string>)[stage];
+      if (override) stageBindings[stage] = override;
+    }
+  }
+
+  await query(
+    `INSERT INTO tasks
+       (task_id, browser_uuid, status, config, total_items,
+        mode, brand_id, time_range_start, time_range_end, platform, batch_id)
+     VALUES ($1, $2, 'pending', $3, 0, 'deep', $4, $5, $6, $7, $8)`,
+    [
+      taskId,
+      browserUuid,
+      JSON.stringify({ ...config, platform }),
+      config.brandId,
+      config.timeRangeStart,
+      config.timeRangeEnd,
+      platform,
+      batchId,
+    ]
+  );
+
+  await bindPromptVersionsToTask(taskId, stageBindings);
+
+  const deepFiles: DeepFileInput[] = files.map((f) => ({
+    filename: f.filename,
+    role: f.role,
+    columnMapping: f.columnMapping,
+    data: f.data,
+    forumFilter: f.forumFilter ?? null,
+  }));
+
+  const init = await initializeDeepTask({ taskId, platform, files: deepFiles });
+  return { taskId, totalItems: init.totalItems, stages };
+}
+
 export async function POST(request: Request) {
   const { response: authResponse } = await requireSession();
   if (authResponse) return authResponse;
@@ -52,6 +111,58 @@ export async function POST(request: Request) {
 
     const body = await request.json();
     const { browserUuid, config, files, mode } = body;
+
+    // Multi-platform batch: one submission → one task per platform, executed
+    // sequentially (spec "Batch upload creates one task per platform").
+    if (mode === 'deep-batch') {
+      if (!browserUuid || !config) {
+        return Response.json({ error: '缺少必要欄位' }, { status: 400 });
+      }
+      const groups = body.platforms as BatchPlatformGroup[] | undefined;
+      const batchValidation = validateBatchInput(groups);
+      if (!batchValidation.ok) {
+        return Response.json({ error: batchValidation.error }, { status: batchValidation.status });
+      }
+      // Validate the shared deep fields once per platform BEFORE creating
+      // anything — an invalid batch creates zero tasks.
+      for (const platform of batchValidation.platforms) {
+        try {
+          validateDeepTaskFields({
+            brandId: config.brandId,
+            platform,
+            timeRangeStart: config.timeRangeStart,
+            timeRangeEnd: config.timeRangeEnd,
+          });
+        } catch (err) {
+          if (err instanceof DeepTaskValidationError) {
+            return Response.json({ error: err.message, field: err.field }, { status: 400 });
+          }
+          throw err;
+        }
+      }
+
+      // All tasks of one submission share a batch_id (single-card history).
+      const batchId = uuidv4();
+      const created: Array<{ task_id: string; platform: Platform; total_items: number }> = [];
+      for (const group of groups as Array<{ platform: Platform; files: DeepFileInput[] }>) {
+        const { taskId, totalItems } = await createDeepTask(
+          browserUuid,
+          config,
+          group.platform,
+          group.files,
+          batchId
+        );
+        created.push({ task_id: taskId, platform: group.platform, total_items: totalItems });
+      }
+
+      // Fire-and-forget: the runner awaits each task in order; recovery takes
+      // over the remainder after a restart (claim prevents double-running).
+      runBatch(created.map((t) => t.task_id)).catch((err) => {
+        console.error('batch runner crashed:', err);
+      });
+
+      return Response.json({ mode: 'deep-batch', tasks: created });
+    }
 
     if (!browserUuid || !config || !files || !Array.isArray(files) || files.length === 0) {
       return Response.json({ error: '缺少必要欄位' }, { status: 400 });
@@ -81,54 +192,21 @@ export async function POST(request: Request) {
       }
 
       const platform = config.platform as Platform;
-      const stages = deepStagesForPlatform(platform);
-
-      // Allow per-stage prompt version override; otherwise use the active version.
-      const stageBindings = await getDefaultStageBindings(stages);
-      if (config.promptVersionOverrides && typeof config.promptVersionOverrides === 'object') {
-        for (const stage of stages) {
-          const override = (config.promptVersionOverrides as Record<string, string>)[stage];
-          if (override) stageBindings[stage] = override;
-        }
-      }
-
-      await query(
-        `INSERT INTO tasks
-           (task_id, browser_uuid, status, config, total_items,
-            mode, brand_id, time_range_start, time_range_end, platform)
-         VALUES ($1, $2, 'pending', $3, 0, 'deep', $4, $5, $6, $7)`,
-        [
-          taskId,
-          browserUuid,
-          JSON.stringify(config),
-          config.brandId,
-          config.timeRangeStart,
-          config.timeRangeEnd,
-          platform,
-        ]
+      const { taskId: deepTaskId, totalItems, stages } = await createDeepTask(
+        browserUuid,
+        config,
+        platform,
+        files as DeepFileInput[]
       );
-
-      await bindPromptVersionsToTask(taskId, stageBindings);
-
-      // Files for deep mode arrive as { filename, role, columnMapping, data, forumFilter? }.
-      const deepFiles: DeepFileInput[] = (files as DeepFileInput[]).map((f) => ({
-        filename: f.filename,
-        role: f.role,
-        columnMapping: f.columnMapping,
-        data: f.data,
-        forumFilter: f.forumFilter ?? null,
-      }));
-
-      const init = await initializeDeepTask({ taskId, platform, files: deepFiles });
-      runDeepTask(taskId).catch((err) => {
-        console.error(`Deep task ${taskId} failed:`, err);
+      runDeepTask(deepTaskId).catch((err) => {
+        console.error(`Deep task ${deepTaskId} failed:`, err);
       });
 
       return Response.json({
-        task_id: taskId,
+        task_id: deepTaskId,
         mode: 'deep',
         stages,
-        total_items: init.totalItems,
+        total_items: totalItems,
       });
     }
 
@@ -199,7 +277,7 @@ export async function GET(request: Request) {
 
     const result = await query(
       `SELECT task_id, status, config, total_items, completed_items, created_at, updated_at,
-              mode, brand_id, time_range_start, time_range_end, platform, sheet_sync_status
+              mode, brand_id, time_range_start, time_range_end, platform, sheet_sync_status, batch_id
        FROM tasks
        WHERE browser_uuid = $1
        ORDER BY created_at DESC`,

@@ -74,7 +74,9 @@ export default function ScatterPlot({
   dotColor = '#404040',
   exportMode = false,
   weighted = false,
-  platformAlpha = { fb: 0.08, ig: 0.12, threads: 0.02, dcard: 0.18 },
+  // Default alpha tuned for regular volumes (Python parity: c='b', ~0.4).
+  // High-volume brands lower these via platform_settings.scatter_alpha.
+  platformAlpha = { fb: 0.4, ig: 0.4, threads: 0.4, dcard: 0.4 },
 }: ScatterPlotProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 

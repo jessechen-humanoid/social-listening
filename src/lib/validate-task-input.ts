@@ -1,5 +1,6 @@
 import { ALLOWED_LIGHT_MODELS } from './analysis-models';
-import { FILE_ROLES } from './column-mapping';
+import { FILE_ROLES, type FileRole } from './column-mapping';
+import { SUPPORTED_PLATFORMS, type Platform } from './platforms';
 
 // Sized for real quarterly Qsearch exports: a single FB comment file has been
 // observed at 26,786 rows, and three FB files JSON-serialized exceed 20MB.
@@ -51,4 +52,80 @@ export function validateTaskInput(body: {
   }
 
   return { ok: true, mode };
+}
+
+// ---------------------------------------------------------------------------
+// Batch input (spec "Platform role completeness validation"): one submission
+// carrying files for several platforms, fanned out into one task per platform.
+// ---------------------------------------------------------------------------
+
+export interface BatchPlatformGroup {
+  platform?: unknown;
+  files?: Array<{ role?: unknown; data?: unknown }> | null;
+}
+
+export type BatchValidation =
+  | { ok: true; platforms: Platform[] }
+  | { ok: false; status: 400 | 413; error: string };
+
+// Roles a platform's group must carry (at least one file each).
+export const REQUIRED_ROLES_BY_PLATFORM: Record<Platform, FileRole[]> = {
+  fb: ['hotpost', 'hotcomment', 'comments_from_posts'],
+  ig: ['hotpost'],
+  threads: ['hotpost'],
+  dcard: ['hotpost'],
+};
+
+export function validateBatchInput(groups: unknown): BatchValidation {
+  if (!Array.isArray(groups) || groups.length === 0) {
+    return { ok: false, status: 400, error: '批次至少需要一個平台的檔案' };
+  }
+
+  const seen = new Set<Platform>();
+  let totalRows = 0;
+
+  for (const group of groups as BatchPlatformGroup[]) {
+    const platform = group?.platform;
+    if (typeof platform !== 'string' || !(SUPPORTED_PLATFORMS as string[]).includes(platform)) {
+      return { ok: false, status: 400, error: `不支援的平台：${String(platform)}` };
+    }
+    if (seen.has(platform as Platform)) {
+      return { ok: false, status: 400, error: `平台 ${platform} 在批次中出現多次` };
+    }
+    seen.add(platform as Platform);
+
+    const files = group.files ?? [];
+    if (files.length === 0) {
+      return { ok: false, status: 400, error: `平台 ${platform} 沒有任何檔案` };
+    }
+
+    const rolesPresent = new Set<string>();
+    for (const f of files) {
+      if (typeof f?.role !== 'string' || !(FILE_ROLES as string[]).includes(f.role)) {
+        return { ok: false, status: 400, error: `無效的檔案 role：${String(f?.role)}` };
+      }
+      rolesPresent.add(f.role);
+      totalRows += Array.isArray(f.data) ? f.data.length : 0;
+    }
+
+    for (const required of REQUIRED_ROLES_BY_PLATFORM[platform as Platform]) {
+      if (!rolesPresent.has(required)) {
+        return {
+          ok: false,
+          status: 400,
+          error: `平台 ${platform} 缺少角色：${required}`,
+        };
+      }
+    }
+  }
+
+  if (totalRows > MAX_TOTAL_ROWS) {
+    return {
+      ok: false,
+      status: 413,
+      error: `批次總列數 ${totalRows} 超過上限 ${MAX_TOTAL_ROWS}`,
+    };
+  }
+
+  return { ok: true, platforms: Array.from(seen) };
 }

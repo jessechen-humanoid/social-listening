@@ -59,12 +59,18 @@ const FIELDS_BY_ROLE: Record<FileRole, FieldSpec[]> = {
 // Valid file roles, for server-side validation of task creation input.
 export const FILE_ROLES = Object.keys(FIELDS_BY_ROLE) as FileRole[];
 
-// Platform-aware field specs: on fb, hotpost author_id becomes required —
-// the B_link parent-post matching key is author_id + '_' + permalink tail.
+// Platform-aware field specs:
+// - fb hotpost: author_id becomes required — the B_link parent-post matching
+//   key is author_id + '_' + permalink tail.
+// - dcard hotpost: post_url becomes optional — real forum exports carry no
+//   URL column, and the forum pipeline (A stages only) never needs one.
 export function getLogicalFields(role: FileRole, platform?: Platform): FieldSpec[] {
   const base = FIELDS_BY_ROLE[role];
   if (platform === 'fb' && role === 'hotpost') {
     return base.map((f) => (f.field === 'author_id' ? { ...f, required: true } : f));
+  }
+  if (platform === 'dcard' && role === 'hotpost') {
+    return base.map((f) => (f.field === 'post_url' ? { ...f, required: false } : f));
   }
   return base;
 }
@@ -81,7 +87,7 @@ export function rolePlatformNeedsForumFilter(
 // Heuristic patterns mapping logical fields to common Qsearch column names.
 // Earlier entries take priority. All matches are case-insensitive.
 const GUESS_PATTERNS: Record<LogicalField, string[]> = {
-  content: ['content', 'message', 'text', 'title'],
+  content: ['content', 'message', 'comment_content', 'text', 'title'],
   engagement_value: [
     'engagement_score',
     'engagement_value',
@@ -100,7 +106,7 @@ const GUESS_PATTERNS: Record<LogicalField, string[]> = {
     'post_permalink',
     'post_url',
   ],
-  forum: ['forum_name', 'forum', 'source', 'site'],
+  forum: ['forum_name', 'forum', 'board', 'source', 'site'],
   author_id: ['poster_id', 'author_id', 'user_id', 'poster_username'],
   author_name: ['poster_name', 'author_name', 'user_name', 'name'],
 };

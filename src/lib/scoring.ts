@@ -1,5 +1,5 @@
 import { query } from './db';
-import { callJson, parseScore } from './deep-pipeline/openai-client';
+import { callJson, isContentLevelFailure, parseScore } from './deep-pipeline/openai-client';
 import { exceedsErrorThreshold } from './error-threshold';
 import { claimTask, createHeartbeat } from './task-claim';
 
@@ -143,9 +143,10 @@ export async function processTask(taskId: string) {
         }
 
         if (lastError) {
+          const status = isContentLevelFailure(lastError) ? 'unscorable' : 'error';
           await query(
-            "UPDATE task_results SET status = 'error' WHERE result_id = $1",
-            [row.result_id]
+            'UPDATE task_results SET status = $1 WHERE result_id = $2',
+            [status, row.result_id]
           );
           await query(
             'UPDATE tasks SET completed_items = completed_items + 1, updated_at = NOW() WHERE task_id = $1',

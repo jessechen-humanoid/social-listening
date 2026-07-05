@@ -42,6 +42,7 @@ const DETAIL_HEADERS = [
   'post_url',
   'parent_post_url',
   'platform',
+  'unscorable_note',
 ];
 
 function authClient() {
@@ -316,13 +317,13 @@ export async function syncDeepTaskToSheet(taskId: string): Promise<void> {
   const detail = await query(
     `SELECT stage_name, content_text, emotion_raw, emotion_calibrated,
             favor_raw, favor_calibrated, related_score, engagement_value,
-            posted_at, post_url, parent_post_url, platform
+            posted_at, post_url, parent_post_url, platform, status, reasoning
      FROM task_results
      WHERE task_id = $1
        AND COALESCE(filtered_out, FALSE) = FALSE
        AND COALESCE(not_real_user, FALSE) = FALSE
-       AND favor_calibrated IS NOT NULL
-     ORDER BY favor_calibrated DESC, engagement_value DESC NULLS LAST`,
+       AND (favor_calibrated IS NOT NULL OR status = 'unscorable')
+     ORDER BY favor_calibrated DESC NULLS LAST, engagement_value DESC NULLS LAST`,
     [taskId]
   );
   const detailRows: Array<Array<string | number | null>> = (
@@ -354,6 +355,9 @@ export async function syncDeepTaskToSheet(taskId: string): Promise<void> {
     r.post_url,
     r.parent_post_url,
     r.platform,
+    (r as { status?: string; reasoning?: string | null }).status === 'unscorable'
+      ? `unscorable: ${(r as { reasoning?: string | null }).reasoning ?? ''}`
+      : null,
   ]);
   // Details first, summary LAST: the summary row is the completion marker
   // that makes retries idempotent (spec "Idempotent sync with summary row

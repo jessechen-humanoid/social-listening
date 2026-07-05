@@ -31,25 +31,35 @@ const ROLE_LABELS: Record<FileRole, string> = {
   comments_from_posts: 'Comments-from-posts（貼文留言）',
 };
 
-export interface FileMappingState {
-  fileId: string;
+// One mapping per slot (platform × role); it applies to every file the slot
+// holds — headers are enforced identical at upload time.
+export interface SlotMappingState {
+  platform: Platform;
   role: FileRole;
   mapping: ColumnMapping;
 }
 
 export interface ConfirmedMappings {
-  perFile: FileMappingState[];
+  perSlot: SlotMappingState[];
   forumFilter: string[] | null; // null = no forum filter applied
 }
 
 interface ColumnMappingStepProps {
   files: UploadedFile[];
-  platform: Platform;
   // Pre-filled mapping from brand memory (role -> mapping). Optional.
   memorizedMappings?: Partial<Record<FileRole, ColumnMapping>>;
   onConfirm: (result: ConfirmedMappings) => void;
   onBack?: () => void;
 }
+
+const PLATFORM_LABELS: Record<Platform, string> = {
+  fb: 'Facebook',
+  ig: 'Instagram',
+  threads: 'Threads',
+  dcard: '論壇（Dcard）',
+};
+
+const slotKey = (platform: Platform, role: FileRole) => `${platform}:${role}`;
 
 interface PreviewStats {
   rowCount: number;
@@ -73,42 +83,47 @@ function toDate(v: unknown): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-function computePreview(file: UploadedFile, mapping: ColumnMapping): PreviewStats {
-  const data = file.data;
+// Preview statistics over the union of a slot's files (spec "Multiple files
+// per role slot": row count, engagement sum, and date range are merged).
+function computePreview(slotFiles: UploadedFile[], mapping: ColumnMapping): PreviewStats {
   const engagementCol = mapping.engagement_value;
   const postedAtCol = mapping.posted_at;
 
+  let rowCount = 0;
   let engagementSum = 0;
   let unparsableEngagement = 0;
   let unparsablePostedAt = 0;
   let minDate: Date | null = null;
   let maxDate: Date | null = null;
 
-  for (const row of data) {
-    if (engagementCol) {
-      const n = toNumber(row[engagementCol]);
-      if (n === null) unparsableEngagement++;
-      else engagementSum += n;
-    }
-    if (postedAtCol) {
-      const d = toDate(row[postedAtCol]);
-      if (d === null) {
-        unparsablePostedAt++;
-      } else {
-        if (!minDate || d < minDate) minDate = d;
-        if (!maxDate || d > maxDate) maxDate = d;
+  for (const file of slotFiles) {
+    rowCount += file.data.length;
+    for (const row of file.data) {
+      if (engagementCol) {
+        const n = toNumber(row[engagementCol]);
+        if (n === null) unparsableEngagement++;
+        else engagementSum += n;
+      }
+      if (postedAtCol) {
+        const d = toDate(row[postedAtCol]);
+        if (d === null) {
+          unparsablePostedAt++;
+        } else {
+          if (!minDate || d < minDate) minDate = d;
+          if (!maxDate || d > maxDate) maxDate = d;
+        }
       }
     }
   }
 
   return {
-    rowCount: data.length,
+    rowCount,
     engagementSum,
     postedAtMin: minDate ? minDate.toISOString().slice(0, 10) : null,
     postedAtMax: maxDate ? maxDate.toISOString().slice(0, 10) : null,
     unparsableEngagement,
     unparsablePostedAt,
-    sampleRows: data.slice(0, 5),
+    sampleRows: slotFiles[0]?.data.slice(0, 5) ?? [],
   };
 }
 
@@ -124,33 +139,42 @@ function distinctForums(file: UploadedFile, forumColumn: string | undefined): st
 
 export default function ColumnMappingStep({
   files,
-  platform,
   memorizedMappings,
   onConfirm,
   onBack,
 }: ColumnMappingStepProps) {
-  const initialMappings: FileMappingState[] = useMemo(() => {
-    return files
-      .filter((f) => f.role)
-      .map((f) => {
-        const role = f.role as FileRole;
-        const memorized = memorizedMappings?.[role];
-        const guessed = guessColumnMapping(f.columns, role, platform);
-        return {
-          fileId: f.id,
-          role,
-          mapping: { ...guessed, ...memorized },
-        };
-      });
-  }, [files, platform, memorizedMappings]);
+  // Group uploaded files into slots (platform × role); one mapping per slot,
+  // guessed from the slot's first file (headers are identical within a slot).
+  const slots = useMemo(() => {
+    const map = new Map<string, { platform: Platform; role: FileRole; files: UploadedFile[] }>();
+    for (const f of files) {
+      if (!f.role || !f.platform) continue;
+      const key = slotKey(f.platform, f.role);
+      if (!map.has(key)) map.set(key, { platform: f.platform, role: f.role, files: [] });
+      map.get(key)!.files.push(f);
+    }
+    return Array.from(map.values());
+  }, [files]);
 
-  const [mappings, setMappings] = useState<FileMappingState[]>(initialMappings);
+  const initialMappings: SlotMappingState[] = useMemo(() => {
+    return slots.map((slot) => {
+      const memorized = memorizedMappings?.[slot.role];
+      const guessed = guessColumnMapping(slot.files[0].columns, slot.role, slot.platform);
+      return {
+        platform: slot.platform,
+        role: slot.role,
+        mapping: { ...guessed, ...memorized },
+      };
+    });
+  }, [slots, memorizedMappings]);
+
+  const [mappings, setMappings] = useState<SlotMappingState[]>(initialMappings);
 
   // Forum filter: only relevant for Dcard hotpost. Defaults to ["Dcard"] only.
   const dcardFile = files.find(
-    (f) => f.role === 'hotpost' && rolePlatformNeedsForumFilter('hotpost', platform)
+    (f) => f.role === 'hotpost' && f.platform === 'dcard'
   );
-  const dcardMapping = mappings.find((m) => m.fileId === dcardFile?.id);
+  const dcardMapping = mappings.find((m) => m.platform === 'dcard' && m.role === 'hotpost');
   const allForums = useMemo(
     () => (dcardFile ? distinctForums(dcardFile, dcardMapping?.mapping.forum) : []),
     [dcardFile, dcardMapping?.mapping.forum]
@@ -171,10 +195,10 @@ export default function ColumnMappingStep({
     }
   }
 
-  const updateMapping = (fileId: string, field: LogicalField, value: string) => {
+  const updateMapping = (platform: Platform, role: FileRole, field: LogicalField, value: string) => {
     setMappings((prev) =>
       prev.map((m) =>
-        m.fileId === fileId
+        m.platform === platform && m.role === role
           ? { ...m, mapping: { ...m.mapping, [field]: value || undefined } }
           : m
       )
@@ -184,15 +208,15 @@ export default function ColumnMappingStep({
   const validations = useMemo(
     () =>
       mappings.map((m) => {
-        const file = files.find((f) => f.id === m.fileId);
+        const slot = slots.find((sl) => sl.platform === m.platform && sl.role === m.role);
         return {
-          fileId: m.fileId,
-          result: file
-            ? validateMapping(m.mapping, m.role, file.columns, platform)
+          key: slotKey(m.platform, m.role),
+          result: slot
+            ? validateMapping(m.mapping, m.role, slot.files[0].columns, m.platform)
             : { ok: false, missing: [] },
         };
       }),
-    [mappings, files, platform]
+    [mappings, slots]
   );
 
   const blocked = validations.some((v) => !v.result.ok);
@@ -202,7 +226,7 @@ export default function ColumnMappingStep({
     if (blocked || confirming) return;
     setConfirming(true); // parent navigates away on success; lock prevents double-submit
     onConfirm({
-      perFile: mappings,
+      perSlot: mappings,
       forumFilter: dcardFile ? Array.from(checkedForums) : null,
     });
   };
@@ -219,28 +243,32 @@ export default function ColumnMappingStep({
       </div>
 
       {mappings.map((m) => {
-        const file = files.find((f) => f.id === m.fileId);
-        if (!file) return null;
-        const validation = validations.find((v) => v.fileId === m.fileId)?.result;
-        const fields = getLogicalFields(m.role, platform).slice();
-        if (rolePlatformNeedsForumFilter(m.role, platform)) {
+        const slot = slots.find((sl) => sl.platform === m.platform && sl.role === m.role);
+        if (!slot) return null;
+        const key = slotKey(m.platform, m.role);
+        const validation = validations.find((v) => v.key === key)?.result;
+        const fields = getLogicalFields(m.role, m.platform).slice();
+        if (rolePlatformNeedsForumFilter(m.role, m.platform)) {
           fields.push({ field: 'forum', required: false });
         }
 
-        const preview = computePreview(file, m.mapping);
+        const preview = computePreview(slot.files, m.mapping);
+        const firstFile = slot.files[0];
 
         return (
           <div
-            key={m.fileId}
+            key={key}
             className="rounded-xl p-5 space-y-4"
             style={{ backgroundColor: '#ffffff', border: '1px solid #e8e8e5' }}
           >
             <div>
               <span className="text-sm font-medium" style={{ color: '#1a1a1a' }}>
-                {ROLE_LABELS[m.role]}
+                {PLATFORM_LABELS[m.platform]}・{ROLE_LABELS[m.role]}
               </span>
               <span className="text-xs ml-2" style={{ color: '#6b6b6b' }}>
-                {file.filename} · {file.rowCount} 列
+                {slot.files.length === 1
+                  ? `${firstFile.filename} · ${preview.rowCount} 列`
+                  : `${slot.files.length} 個檔案合併 · 共 ${preview.rowCount} 列`}
               </span>
             </div>
 
@@ -253,7 +281,7 @@ export default function ColumnMappingStep({
                   </label>
                   <select
                     value={m.mapping[field] ?? ''}
-                    onChange={(e) => updateMapping(m.fileId, field, e.target.value)}
+                    onChange={(e) => updateMapping(m.platform, m.role, field, e.target.value)}
                     className="w-full rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#2d2d2d] focus:outline-none"
                     style={{
                       border: '1px solid #e8e8e5',
@@ -262,7 +290,7 @@ export default function ColumnMappingStep({
                     }}
                   >
                     <option value="">{required ? '選擇欄位...' : '不選擇'}</option>
-                    {file.columns.map((col) => (
+                    {firstFile.columns.map((col) => (
                       <option key={col} value={col}>
                         {col}
                       </option>
@@ -278,9 +306,8 @@ export default function ColumnMappingStep({
               </div>
             )}
 
-            {/* Preview block (task 5.5) */}
             <PreviewBlock
-              file={file}
+              file={firstFile}
               mapping={m.mapping}
               preview={preview}
             />

@@ -14,7 +14,7 @@ describe('runDeepTask stage failure threshold', () => {
   let runDeepTask: typeof import('../deep-pipeline/orchestrator').runDeepTask;
   const BRAND = '11111111-1111-1111-1111-111111111111';
 
-  async function insertDeepTask(id: string, failCount: number, total: number) {
+  async function insertDeepTask(id: string, failCount: number, total: number, failPrefix = 'FAIL_ME') {
     await testDb.db.query(
       `INSERT INTO tasks (task_id, browser_uuid, status, mode, platform, brand_id, total_items, config)
        VALUES ($1, 'test', 'pending', 'deep', 'ig', $2, $3, '{}')`,
@@ -26,7 +26,7 @@ describe('runDeepTask stage failure threshold', () => {
       [`file-${id}`, id, total]
     );
     for (let i = 0; i < total; i++) {
-      const content = i < failCount ? `FAIL_ME_${i}` : `正常內容 ${i}`;
+      const content = i < failCount ? `${failPrefix}_${i}` : `正常內容 ${i}`;
       await testDb.db.query(
         `INSERT INTO task_results (result_id, task_id, file_id, row_index, content_text, post_url, engagement_value, posted_at, platform, stage_name, status)
          VALUES ($1, $2, $3, $4, $5, $6, 5, '2026-04-10T10:00:00+08:00', 'ig', 'A', 'pending')`,
@@ -57,14 +57,16 @@ describe('runDeepTask stage failure threshold', () => {
       if (req.messages[1].content.includes('FAIL_ME')) {
         return Promise.reject(new Error('simulated per-row failure'));
       }
+      // Content-level refusal: model answers but with unusable scores.
+      const refused = req.messages[1].content.includes('REFUSE_ME');
       return Promise.resolve({
         choices: [
           {
             message: {
               content: JSON.stringify({
                 關聯性分數: 10,
-                情緒分數: 6,
-                好感分數: 7,
+                情緒分數: refused ? '抱歉，無法評分' : 6,
+                好感分數: refused ? null : 7,
                 NotRealUser: 'False',
               }),
             },
@@ -98,6 +100,31 @@ describe('runDeepTask stage failure threshold', () => {
     );
     expect((stage.rows[0] as { status: string }).status).toBe('error');
     expect((stage.rows[0] as { error: string }).error).toContain('3/200');
+  }, 60_000);
+
+  // Spec "Empty AI responses are failures" (modified): content refusals become
+  // unscorable and never trip the system-failure threshold.
+  it('completes the task when 3 of 20 rows are content refusals (unscorable)', async () => {
+    await insertDeepTask('t-refusals', 3, 20, 'REFUSE_ME');
+    await runDeepTask('t-refusals');
+
+    const task = await testDb.db.query(`SELECT status FROM tasks WHERE task_id = 't-refusals'`);
+    expect((task.rows[0] as { status: string }).status).toBe('completed');
+
+    const statuses = await testDb.db.query(
+      `SELECT status, COUNT(*)::int AS n FROM task_results
+       WHERE task_id = 't-refusals' GROUP BY status ORDER BY status`
+    );
+    const byStatus = Object.fromEntries(
+      (statuses.rows as Array<{ status: string; n: number }>).map((r) => [r.status, r.n])
+    );
+    expect(byStatus['unscorable']).toBe(3);
+    expect(byStatus['error']).toBeUndefined();
+
+    const agg = await testDb.db.query(
+      `SELECT sample_count FROM deep_task_aggregates WHERE task_id = 't-refusals'`
+    );
+    expect((agg.rows[0] as { sample_count: number }).sample_count).toBe(17);
   }, 60_000);
 
   it('completes the task when 1 of 200 rows errors (0.5% within threshold)', async () => {

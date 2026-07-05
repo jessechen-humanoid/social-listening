@@ -5,17 +5,18 @@ import { v4 as uuidv4 } from 'uuid';
 import { parseFile } from '@/lib/parse-file';
 import type { UploadedFile } from '@/lib/types';
 import type { FileRole } from '@/lib/column-mapping';
-import type { Platform } from '@/lib/platforms';
+import { SUPPORTED_PLATFORMS, type Platform } from '@/lib/platforms';
+import { compareHeaderSets, describeHeaderMismatch } from '@/lib/header-compare';
 
 type Mode = 'light' | 'deep';
 
 interface FileUploadProps {
   files: UploadedFile[];
   onChange: (files: UploadedFile[]) => void;
-  // Deep mode renders role-based slots (1 for IG/Threads/Dcard, 3 for FB).
+  // Deep mode renders one section per platform (FB three role slots, others
+  // one hotpost slot), all optional — upload everything for the quarter at once.
   // Light mode (default) keeps the existing free-form upload + inline column dropdowns.
   mode?: Mode;
-  platform?: Platform;
 }
 
 const ROLE_LABELS: Record<FileRole, string> = {
@@ -33,6 +34,13 @@ function rolesForPlatform(platform: Platform): FileRole[] {
 
 // Qsearch multi-sheet workbooks name their sheets by platform; pick the sheet
 // matching the task's platform by default (fb→FB, dcard→FORUM, case-insensitive).
+const PLATFORM_LABELS: Record<Platform, string> = {
+  fb: 'Facebook',
+  ig: 'Instagram',
+  threads: 'Threads',
+  dcard: '論壇（Dcard）',
+};
+
 const PLATFORM_SHEET_ALIASES: Record<Platform, string[]> = {
   fb: ['fb', 'facebook'],
   ig: ['ig', 'instagram'],
@@ -77,7 +85,7 @@ async function buildUploadedFile(
   };
 }
 
-export default function FileUpload({ files, onChange, mode = 'light', platform }: FileUploadProps) {
+export default function FileUpload({ files, onChange, mode = 'light' }: FileUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleFiles = useCallback(async (fileList: FileList) => {
@@ -115,20 +123,31 @@ export default function FileUpload({ files, onChange, mode = 'light', platform }
     onChange(files.map(f => f.id === id ? { ...f, [field]: value } : f));
   }, [files, onChange]);
 
-  const handleSlotUpload = useCallback(async (role: FileRole, file: File) => {
+  const handleSlotUpload = useCallback(async (platform: Platform, role: FileRole, file: File) => {
     const ext = file.name.split('.').pop()?.toLowerCase();
     if (!ext || !['csv', 'xlsx', 'xls'].includes(ext)) {
       alert(`${file.name}：不支援的格式，請上傳 CSV 或 Excel (.xlsx) 檔案`);
       return;
     }
     try {
-      const uploaded = await buildUploadedFile(file, role, platform);
-      // One file per role: replace any existing file in the slot.
-      onChange([...files.filter(f => f.role !== role), uploaded]);
+      const uploaded = { ...(await buildUploadedFile(file, role, platform)), platform };
+      // Multi-file slot (Qsearch split exports): all files in a slot share one
+      // column mapping, so headers must match the slot's first file exactly.
+      const existing = files.filter(f => f.platform === platform && f.role === role);
+      if (existing.length > 0) {
+        const cmp = compareHeaderSets(existing[0].columns, uploaded.columns);
+        if (!cmp.same) {
+          alert(
+            `${file.name} 的欄位與 ${existing[0].filename} 不一致，無法放入同一槽位。\n${describeHeaderMismatch(cmp)}`
+          );
+          return;
+        }
+      }
+      onChange([...files, uploaded]);
     } catch (err) {
       alert(err instanceof Error ? err.message : '檔案解析失敗');
     }
-  }, [files, onChange, platform]);
+  }, [files, onChange]);
 
   // Multi-sheet workbooks: re-parse the original file with the chosen sheet,
   // keeping the same UploadedFile id so downstream mapping state stays attached.
@@ -136,36 +155,45 @@ export default function FileUpload({ files, onChange, mode = 'light', platform }
     const existing = files.find(f => f.id === id);
     if (!existing) return;
     try {
-      const reparsed = await buildUploadedFile(existing.file, existing.role, platform, sheetName);
-      onChange(files.map(f => (f.id === id ? { ...reparsed, id } : f)));
+      const reparsed = await buildUploadedFile(existing.file, existing.role, existing.platform, sheetName);
+      onChange(files.map(f => (f.id === id ? { ...reparsed, id, platform: existing.platform } : f)));
     } catch (err) {
       alert(err instanceof Error ? err.message : '工作表切換失敗');
     }
-  }, [files, onChange, platform]);
+  }, [files, onChange]);
 
   if (mode === 'deep') {
-    if (!platform) {
-      return (
-        <p className="text-sm" style={{ color: '#c75c5c' }}>
-          深度模式需要先選擇平台才能上傳檔案。
-        </p>
-      );
-    }
-    const roles = rolesForPlatform(platform);
     return (
-      <div className="space-y-4">
-        <label className="text-sm font-medium" style={{ color: '#6b6b6b' }}>資料檔案</label>
-        {roles.map(role => {
-          const slotFile = files.find(f => f.role === role);
+      <div className="space-y-6">
+        <label className="text-sm font-medium" style={{ color: '#6b6b6b' }}>
+          資料檔案（各平台皆可留空；有檔案的平台會各自建立一個分析任務）
+        </label>
+        {SUPPORTED_PLATFORMS.map(platform => {
+          const sectionFiles = files.filter(f => f.platform === platform);
           return (
-            <RoleSlot
-              key={role}
-              role={role}
-              file={slotFile}
-              onUpload={handleSlotUpload}
-              onRemove={handleRemove}
-              onSheetChange={handleSheetChange}
-            />
+            <div key={platform} className="space-y-3">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium" style={{ color: '#1a1a1a' }}>
+                  {PLATFORM_LABELS[platform]}
+                </span>
+                {sectionFiles.length > 0 && (
+                  <span className="text-xs" style={{ color: '#7a9e7e' }}>
+                    {sectionFiles.length} 個檔案
+                  </span>
+                )}
+              </div>
+              {rolesForPlatform(platform).map(role => (
+                <RoleSlot
+                  key={`${platform}-${role}`}
+                  platform={platform}
+                  role={role}
+                  files={sectionFiles.filter(f => f.role === role)}
+                  onUpload={handleSlotUpload}
+                  onRemove={handleRemove}
+                  onSheetChange={handleSheetChange}
+                />
+              ))}
+            </div>
           );
         })}
       </div>
@@ -268,20 +296,23 @@ export default function FileUpload({ files, onChange, mode = 'light', platform }
 }
 
 interface RoleSlotProps {
+  platform: Platform;
   role: FileRole;
-  file?: UploadedFile;
-  onUpload: (role: FileRole, file: File) => void;
+  files: UploadedFile[];
+  onUpload: (platform: Platform, role: FileRole, file: File) => void;
   onRemove: (id: string) => void;
   onSheetChange: (id: string, sheetName: string) => void;
 }
 
-function RoleSlot({ role, file, onUpload, onRemove, onSheetChange }: RoleSlotProps) {
+function RoleSlot({ platform, role, files, onUpload, onRemove, onSheetChange }: RoleSlotProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    const dropped = e.dataTransfer.files[0];
-    if (dropped) onUpload(role, dropped);
+    // Multi-file slot: accept every dropped file (Qsearch split exports).
+    for (const dropped of Array.from(e.dataTransfer.files)) {
+      onUpload(platform, role, dropped);
+    }
   };
 
   return (
@@ -292,8 +323,39 @@ function RoleSlot({ role, file, onUpload, onRemove, onSheetChange }: RoleSlotPro
       <div className="flex items-center justify-between mb-3">
         <span className="text-sm font-medium" style={{ color: '#1a1a1a' }}>
           {ROLE_LABELS[role]}
+          {files.length > 1 && (
+            <span className="text-xs ml-2" style={{ color: '#6b6b6b' }}>
+              {files.length} 個檔案（將合併分析）
+            </span>
+          )}
         </span>
-        {file && (
+      </div>
+
+      {files.map(file => (
+        <div
+          key={file.id}
+          className="flex items-center justify-between rounded-lg px-3 py-2 mb-2"
+          style={{ backgroundColor: '#fafaf8', border: '1px solid #f0f0ed' }}
+        >
+          <div className="text-xs space-y-1" style={{ color: '#6b6b6b' }}>
+            <div style={{ color: '#1a1a1a' }}>{file.filename}</div>
+            <div>{file.rowCount} 列 · {file.columns.length} 個欄位</div>
+            {(file.sheetNames?.length ?? 0) > 1 && (
+              <div className="flex items-center gap-2">
+                <label className="text-xs" style={{ color: '#6b6b6b' }}>工作表</label>
+                <select
+                  value={file.selectedSheet ?? ''}
+                  onChange={e => onSheetChange(file.id, e.target.value)}
+                  className="rounded-lg px-2 py-1 text-xs focus:ring-2 focus:ring-[#2d2d2d] focus:outline-none"
+                  style={{ border: '1px solid #e8e8e5', backgroundColor: '#ffffff', color: '#1a1a1a' }}
+                >
+                  {file.sheetNames!.map(name => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
           <button
             onClick={() => onRemove(file.id)}
             className="text-sm px-2 py-1 rounded-lg transition"
@@ -301,56 +363,36 @@ function RoleSlot({ role, file, onUpload, onRemove, onSheetChange }: RoleSlotPro
           >
             移除
           </button>
-        )}
-      </div>
+        </div>
+      ))}
 
-      {file ? (
-        <div className="text-xs space-y-2" style={{ color: '#6b6b6b' }}>
-          <div style={{ color: '#1a1a1a' }}>{file.filename}</div>
-          <div>{file.rowCount} 列 · {file.columns.length} 個欄位</div>
-          {(file.sheetNames?.length ?? 0) > 1 && (
-            <div className="flex items-center gap-2">
-              <label className="text-xs" style={{ color: '#6b6b6b' }}>工作表</label>
-              <select
-                value={file.selectedSheet ?? ''}
-                onChange={e => onSheetChange(file.id, e.target.value)}
-                className="rounded-lg px-2 py-1 text-xs focus:ring-2 focus:ring-[#2d2d2d] focus:outline-none"
-                style={{ border: '1px solid #e8e8e5', backgroundColor: '#ffffff', color: '#1a1a1a' }}
-              >
-                {file.sheetNames!.map(name => (
-                  <option key={name} value={name}>{name}</option>
-                ))}
-              </select>
-            </div>
-          )}
-        </div>
-      ) : (
-        <div
-          className="rounded-lg p-6 text-center cursor-pointer transition"
-          style={{ border: '2px dashed #e8e8e5' }}
-          onDragOver={e => e.preventDefault()}
-          onDrop={handleDrop}
-          onClick={() => inputRef.current?.click()}
-        >
-          <p className="text-sm" style={{ color: '#6b6b6b' }}>
-            拖放檔案至此，或點擊上傳
-          </p>
-          <p className="text-xs mt-1" style={{ color: '#c0c0c0' }}>
-            支援 CSV、Excel (.xlsx)
-          </p>
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".csv,.xlsx,.xls"
-            className="hidden"
-            onChange={e => {
-              const f = e.target.files?.[0];
-              if (f) onUpload(role, f);
-              e.target.value = '';
-            }}
-          />
-        </div>
-      )}
+      <div
+        className="rounded-lg p-4 text-center cursor-pointer transition"
+        style={{ border: '2px dashed #e8e8e5' }}
+        onDragOver={e => e.preventDefault()}
+        onDrop={handleDrop}
+        onClick={() => inputRef.current?.click()}
+      >
+        <p className="text-sm" style={{ color: '#6b6b6b' }}>
+          {files.length === 0 ? '拖放檔案至此，或點擊上傳' : '加入更多分割檔（欄位須相同）'}
+        </p>
+        <p className="text-xs mt-1" style={{ color: '#c0c0c0' }}>
+          支援 CSV、Excel (.xlsx)，可多檔
+        </p>
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".csv,.xlsx,.xls"
+          multiple
+          className="hidden"
+          onChange={e => {
+            for (const f of Array.from(e.target.files ?? [])) {
+              onUpload(platform, role, f);
+            }
+            e.target.value = '';
+          }}
+        />
+      </div>
     </div>
   );
 }

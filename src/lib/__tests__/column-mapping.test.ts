@@ -67,6 +67,30 @@ describe('platform-aware author_id requirement', () => {
     expect(result.ok).toBe(true);
   });
 
+  // Spec "Forum hotpost mapping without URLs" (add-multi-platform-batch-upload)
+  it('passes a real forum export for dcard hotpost without any post_url', () => {
+    const columns = [
+      'id', 'comment_content', 'created_time', 'like_count', 'board',
+      'parent_id', 'comment_owner_id', 'comment_owner', 'type',
+    ];
+    const guess = guessColumnMapping(columns, 'hotpost', 'dcard');
+    expect(guess.content).toBe('comment_content');
+    expect(guess.forum).toBe('board');
+    const result = validateMapping(guess, 'hotpost', columns, 'dcard');
+    expect(result.ok).toBe(true);
+  });
+
+  it('still requires post_url for non-dcard hotpost', () => {
+    const result = validateMapping(
+      { content: 'content', engagement_value: 'like_count', posted_at: 'created_time' },
+      'hotpost',
+      ['content', 'like_count', 'created_time'],
+      'threads'
+    );
+    expect(result.ok).toBe(false);
+    expect(result.missing).toContain('post_url');
+  });
+
   it('marks author_id required only for fb hotpost field specs', () => {
     const fbSpec = getLogicalFields('hotpost', 'fb').find((f) => f.field === 'author_id');
     const igSpec = getLogicalFields('hotpost', 'ig').find((f) => f.field === 'author_id');

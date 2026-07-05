@@ -56,7 +56,7 @@ export async function migrate() {
       id UUID PRIMARY KEY,
       name TEXT UNIQUE NOT NULL,
       platform_settings JSONB NOT NULL DEFAULT '{
-        "scatter_alpha": {"fb": 0.08, "ig": 0.12, "threads": 0.02, "dcard": 0.18},
+        "scatter_alpha": {"fb": 0.4, "ig": 0.4, "threads": 0.4, "dcard": 0.4},
         "timeline_colors": {"positive": "#3B82F6", "negative": "#EF4444"}
       }'::jsonb,
       calibration_set_id UUID,
@@ -64,6 +64,18 @@ export async function migrate() {
     )
   `);
   await query(`CREATE INDEX IF NOT EXISTS idx_brands_name ON brands(name)`);
+  // One-time (idempotent) re-default: brands still on the original dense-alpha
+  // defaults never configured them intentionally — move them to the readable
+  // defaults (spec "Deep scatter default styling"). Custom values untouched.
+  await query(`
+    UPDATE brands
+    SET platform_settings = jsonb_set(
+      platform_settings, '{scatter_alpha}',
+      '{"fb": 0.4, "ig": 0.4, "threads": 0.4, "dcard": 0.4}'::jsonb
+    )
+    WHERE platform_settings->'scatter_alpha'
+          = '{"fb": 0.08, "ig": 0.12, "threads": 0.02, "dcard": 0.18}'::jsonb
+  `);
 
   await query(`
     CREATE TABLE IF NOT EXISTS prompt_versions (
@@ -105,6 +117,9 @@ export async function migrate() {
   // Execution lease for the single-runner claim: NULL means the row predates
   // this column (legacy) and is treated as claimable.
   await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ`);
+  // Tasks born from one batch submission share a batch_id (NULL for legacy /
+  // single-created tasks); the history UI groups them into one card.
+  await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS batch_id UUID`);
 
   // Add FK on tasks.brand_id (no IF NOT EXISTS for ALTER TABLE ADD CONSTRAINT)
   await query(`

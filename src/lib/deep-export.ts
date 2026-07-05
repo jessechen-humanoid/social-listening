@@ -5,6 +5,8 @@ import { query } from './db';
 interface DeepRow {
   task_id: string;
   stage_name: string | null;
+  status?: string;
+  reasoning?: string | null;
   content_text: string;
   emotion_raw: number | null;
   emotion_calibrated: number | null;
@@ -132,13 +134,13 @@ async function loadCurrentDetail(taskId: string): Promise<DeepRow[]> {
   const result = await query(
     `SELECT task_id, stage_name, content_text, emotion_raw, emotion_calibrated,
             favor_raw, favor_calibrated, related_score, engagement_value,
-            posted_at, post_url, parent_post_url, platform
+            posted_at, post_url, parent_post_url, platform, status, reasoning
      FROM task_results
      WHERE task_id = $1
        AND COALESCE(filtered_out, FALSE) = FALSE
        AND COALESCE(not_real_user, FALSE) = FALSE
-       AND favor_calibrated IS NOT NULL
-     ORDER BY platform, favor_calibrated DESC, engagement_value DESC NULLS LAST`,
+       AND (favor_calibrated IS NOT NULL OR status = 'unscorable')
+     ORDER BY platform, favor_calibrated DESC NULLS LAST, engagement_value DESC NULLS LAST`,
     [taskId]
   );
   return result.rows as DeepRow[];
@@ -186,6 +188,11 @@ export async function generateDeepXlsx(taskId: string): Promise<Buffer> {
       detail.map((r) => ({
         ...r,
         posted_at: r.posted_at ? new Date(r.posted_at).toISOString() : null,
+        // Analyst-facing marker: rows the model could not score are delivered
+        // with full text for manual review, never silently dropped.
+        unscorable: r.status === 'unscorable' ? r.reasoning ?? 'unscorable' : null,
+        status: undefined,
+        reasoning: undefined,
       }))
     ),
     'current_detail'

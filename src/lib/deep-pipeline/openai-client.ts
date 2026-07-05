@@ -68,6 +68,15 @@ export function fillPlaceholders(template: string, values: Record<string, string
   });
 }
 
+// Content-level failures are properties of the text being scored (refusals,
+// mangled JSON, out-of-range scores) — rows hitting these become 'unscorable'
+// and are excluded from analysis without tripping the system-failure
+// threshold. Everything else (API/network) is a real error.
+export function isContentLevelFailure(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /empty AI response content|invalid scores in AI response|Unexpected token|is not valid JSON|JSON/i.test(msg);
+}
+
 // Coerce the AI's "score" field (which may be int, float, or "NAN") to a finite number,
 // or null if unparseable. Scores live on a 0–10 scale; out-of-range values are
 // treated as unparseable (logged) so an outlier can never distort aggregates.

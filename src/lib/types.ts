@@ -12,6 +12,8 @@ export interface UploadedFile {
   data: Record<string, unknown>[];
   // Deep mode: which role slot this file occupies. Undefined for light mode.
   role?: FileRole;
+  // Deep batch mode: which platform section this file belongs to.
+  platform?: Platform;
   // Multi-sheet workbooks: all sheet names and the one currently parsed.
   sheetNames?: string[];
   selectedSheet?: string | null;
@@ -36,7 +38,9 @@ export interface DeepAnalysisConfig {
   projectName: string;
   brandId: string;
   brandName: string;
-  platform: Platform;
+  // Batch flow: files carry their own platform; a created task's config gets
+  // the platform stamped server-side. Optional at form time.
+  platform?: Platform;
   timeRangeStart: string; // YYYY-MM-DD
   timeRangeEnd: string;
   // Optional per-stage overrides; otherwise the brand's active prompts are used
@@ -100,6 +104,8 @@ export interface TaskProgress {
   config: AnalysisConfig;
   created_at: string;
   mode?: 'light' | 'deep';
+  platform?: Platform | null;
+  batch_id?: string | null;
   // Deep tasks: persisted aggregates + brand display settings (progress API).
   aggregates?: import('./deep-pipeline/aggregate').PlatformAggregate[];
   platform_settings?: { scatter_alpha?: Record<string, number> } | null;

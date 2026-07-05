@@ -1,7 +1,7 @@
 import { query } from '../db';
 import type { PromptVersion } from '../prompt-versions';
 import { DEEP_STAGES, type DeepStageName } from '../seed-prompts';
-import { callJson, fillPlaceholders, parseScore, parseBoolFlag } from './openai-client';
+import { callJson, fillPlaceholders, isContentLevelFailure, parseScore, parseBoolFlag } from './openai-client';
 import { parentKey, postKey } from '../fb-post-key';
 
 export interface StageContext {
@@ -65,9 +65,11 @@ export async function runStageARelatedFilter(ctx: StageContext): Promise<StageOu
       outputCount++;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      // Content refusals become 'unscorable' (excluded, not a system failure).
+      const status = isContentLevelFailure(err) ? 'unscorable' : 'error';
       await query(
-        `UPDATE task_results SET status = 'error', reasoning = $1 WHERE result_id = $2`,
-        [`A_related_filter: ${msg}`, row.result_id]
+        `UPDATE task_results SET status = $1, reasoning = $2 WHERE result_id = $3`,
+        [status, `A_related_filter: ${msg}`, row.result_id]
       );
     }
   }
@@ -104,6 +106,9 @@ export async function runStageAEmotionFavor(ctx: StageContext): Promise<StageOut
       const result = await callJson<Record<string, unknown>>({ prompt, userMessage });
       const emotion = parseScore(result['情緒分數']);
       const favor = parseScore(result['好感分數']);
+      if (emotion === null || favor === null) {
+        throw new Error('invalid scores in AI response');
+      }
       const notRealUser = parseBoolFlag(result['NotRealUser']);
       const notRealUserReason =
         typeof result['NotRealUser_reason'] === 'string'
@@ -127,9 +132,11 @@ export async function runStageAEmotionFavor(ctx: StageContext): Promise<StageOut
       outputCount++;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      // Content refusals become 'unscorable' (excluded, not a system failure).
+      const status = isContentLevelFailure(err) ? 'unscorable' : 'error';
       await query(
-        `UPDATE task_results SET status = 'error', reasoning = $1 WHERE result_id = $2`,
-        [`A_emotion_favor: ${msg}`, row.result_id]
+        `UPDATE task_results SET status = $1, reasoning = $2 WHERE result_id = $3`,
+        [status, `A_emotion_favor: ${msg}`, row.result_id]
       );
     }
   }
@@ -258,9 +265,11 @@ export async function runStageBTagFriendFilter(ctx: StageContext): Promise<Stage
       if (!filteredOut) kept++;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      // Content refusals become 'unscorable' (excluded, not a system failure).
+      const status = isContentLevelFailure(err) ? 'unscorable' : 'error';
       await query(
-        `UPDATE task_results SET status = 'error', reasoning = $1 WHERE result_id = $2`,
-        [`B_tag_friend_filter: ${msg}`, row.result_id]
+        `UPDATE task_results SET status = $1, reasoning = $2 WHERE result_id = $3`,
+        [status, `B_tag_friend_filter: ${msg}`, row.result_id]
       );
     }
   }
@@ -350,7 +359,7 @@ async function scoreCommentBatch(
     message_bundle: messageBundle,
   });
 
-  let scores: Array<{ emotion: number | null; favor: number | null }> = [];
+  let scores: Array<{ emotion: number | null; favor: number | null; failure?: 'content' | 'error' }> = [];
   try {
     const result = await callJson<{ result?: Array<Record<string, unknown>> }>({
       prompt,
@@ -387,8 +396,12 @@ async function scoreCommentBatch(
           emotion: parseScore((entry as Record<string, unknown>)?.['情緒分數']),
           favor: parseScore((entry as Record<string, unknown>)?.['好感分數']),
         });
-      } catch {
-        scores.push({ emotion: null, favor: null });
+      } catch (err) {
+        scores.push({
+          emotion: null,
+          favor: null,
+          failure: isContentLevelFailure(err) ? 'content' : 'error',
+        });
       }
     }
   }
@@ -405,10 +418,12 @@ async function scoreCommentBatch(
       );
       written++;
     } else {
-      // Consistent with the other AI stages: exhausted retries end in error.
+      // Parsed-null without a recorded transport failure = the model returned
+      // junk for this text → content-level. Real API failures stay 'error'.
+      const status = scores[i].failure === 'error' ? 'error' : 'unscorable';
       await query(
-        `UPDATE task_results SET status = 'error', reasoning = $1 WHERE result_id = $2`,
-        ['B_emotion_favor: scoring failed after retries', batch[i].result_id]
+        `UPDATE task_results SET status = $1, reasoning = $2 WHERE result_id = $3`,
+        [status, 'B_emotion_favor: scoring failed after retries', batch[i].result_id]
       );
     }
   }
@@ -482,6 +497,9 @@ export async function runStageCEmotionFavor(ctx: StageContext): Promise<StageOut
       const related = parseScore(result['關聯性分數']);
       const emotion = parseScore(result['情緒分數']);
       const favor = parseScore(result['好感分數']);
+      if (emotion === null || favor === null) {
+        throw new Error('invalid scores in AI response');
+      }
       const filteredOut = related !== null && related <= RELATED_THRESHOLD;
       await query(
         `UPDATE task_results
@@ -496,9 +514,11 @@ export async function runStageCEmotionFavor(ctx: StageContext): Promise<StageOut
       outputCount++;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      // Content refusals become 'unscorable' (excluded, not a system failure).
+      const status = isContentLevelFailure(err) ? 'unscorable' : 'error';
       await query(
-        `UPDATE task_results SET status = 'error', reasoning = $1 WHERE result_id = $2`,
-        [`C_emotion_favor: ${msg}`, row.result_id]
+        `UPDATE task_results SET status = $1, reasoning = $2 WHERE result_id = $3`,
+        [status, `C_emotion_favor: ${msg}`, row.result_id]
       );
     }
   }
