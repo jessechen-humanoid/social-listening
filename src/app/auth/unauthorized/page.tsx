@@ -13,7 +13,7 @@ export default function UnauthorizedPage() {
           你沒有存取權限
         </p>
         <p className="text-xs mb-6" style={{ color: "#6b6b6b" }}>
-          如果你認為這是錯誤，請聯絡管理員
+          請使用公司 Google Workspace 帳號登入；如果你認為這是錯誤，請聯絡管理員
         </p>
         <button
           onClick={() => signOut({ callbackUrl: "/auth/signin" })}

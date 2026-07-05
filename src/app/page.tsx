@@ -10,6 +10,7 @@ import ProgressBar from '@/components/ProgressBar';
 import WeeklyTimeline from '@/components/WeeklyTimeline';
 import JSZip from 'jszip';
 import { exportReportCSV } from '@/lib/export-report';
+import { sanitizeFilename } from '@/lib/sanitize-export';
 import { getBrowserUuid } from '@/lib/browser-uuid';
 import { REQUIRED_ROLES_BY_PLATFORM } from '@/lib/validate-task-input';
 import type { Platform } from '@/lib/platforms';
@@ -334,7 +335,7 @@ export default function Home() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${viewedBatch.title}.zip`;
+      a.download = `${sanitizeFilename(viewedBatch.title)}.zip`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -615,7 +616,7 @@ export default function Home() {
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = `charts-${currentTaskId}.zip`;
+                    a.download = `charts-${sanitizeFilename(currentTaskId)}.zip`;
                     a.click();
                     URL.revokeObjectURL(url);
                   }}

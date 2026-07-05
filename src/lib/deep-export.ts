@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import { sanitizeFilename } from './sanitize-export';
 import * as XLSX from 'xlsx';
 import { query } from './db';
 
@@ -236,7 +237,9 @@ export async function generateChartBundle(input: ChartBundleInputs): Promise<Buf
   const meta = await loadTaskMeta(input.taskId);
   const zip = new JSZip();
   for (const chart of input.charts) {
-    zip.file(chart.filename, chart.pngBytes);
+    // Entry names arrive from the client — single sanitization chokepoint
+    // (spec "One-click chart bundle download", malicious-entry scenario).
+    zip.file(sanitizeFilename(chart.filename), chart.pngBytes);
   }
   zip.file(
     'metadata.json',

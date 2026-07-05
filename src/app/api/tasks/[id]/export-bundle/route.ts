@@ -1,5 +1,6 @@
 import { auth } from '@/lib/auth';
 import { generateChartBundle, shouldRunBundleAsync } from '@/lib/deep-export';
+import { sanitizeFilename } from '@/lib/sanitize-export';
 
 interface ChartPayload {
   filename: string;
@@ -33,7 +34,7 @@ export async function POST(
     return new Response(new Uint8Array(buf), {
       headers: {
         'Content-Type': 'application/zip',
-        'Content-Disposition': `attachment; filename="charts-${id}.zip"`,
+        'Content-Disposition': `attachment; filename="charts-${sanitizeFilename(id)}.zip"`,
         'X-Async-Mode': String(isAsync),
       },
     });

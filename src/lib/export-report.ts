@@ -1,4 +1,8 @@
 import type { TaskResult } from './types';
+import { sanitizeCsvCell, sanitizeFilename } from './sanitize-export';
+
+// Formula-neutralize first, then CSV-quote (spec "Scored data report export").
+const cell = (value: string) => escapeCsv(sanitizeCsvCell(value));
 
 export function exportReportCSV(results: TaskResult[], hasCondition: boolean, projectName: string = '') {
   const BOM = '\uFEFF';
@@ -14,11 +18,11 @@ export function exportReportCSV(results: TaskResult[], hasCondition: boolean, pr
   const rows = results
     .filter(r => r.status === 'completed')
     .map(r => [
-      escapeCsv(r.content_text),
+      cell(r.content_text),
       ...(hasCondition ? [r.condition_result === null ? '' : String(r.condition_result)] : []),
       r.x_score !== null ? String(r.x_score) : '',
       r.y_score !== null ? String(r.y_score) : '',
-      escapeCsv(r.source_file || ''),
+      cell(r.source_file || ''),
       r.engagement_value !== null ? String(r.engagement_value) : '',
     ]);
 
@@ -26,7 +30,9 @@ export function exportReportCSV(results: TaskResult[], hasCondition: boolean, pr
 
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
   const link = document.createElement('a');
-  link.download = projectName ? `${projectName}_輿情分析報表.csv` : '輿情分析報表.csv';
+  link.download = projectName
+    ? `${sanitizeFilename(projectName)}_輿情分析報表.csv`
+    : '輿情分析報表.csv';
   link.href = URL.createObjectURL(blob);
   link.click();
   URL.revokeObjectURL(link.href);

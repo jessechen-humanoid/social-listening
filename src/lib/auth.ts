@@ -1,6 +1,10 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
-import { checkSheetPermission } from "./sheet-permission";
+import {
+  ALLOWED_WORKSPACE_DOMAIN,
+  enforceReauthWindow,
+  verifyWorkspaceProfile,
+} from "./workspace-auth";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   trustHost: true,
@@ -10,13 +14,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
       authorization: {
         params: {
-          // Request Sheets + Drive.file scopes for deep-mode brand spreadsheets.
-          scope:
-            'openid email profile ' +
-            'https://www.googleapis.com/auth/spreadsheets ' +
-            'https://www.googleapis.com/auth/drive.file',
-          access_type: 'offline',
-          prompt: 'consent',
+          // Minimal OIDC scopes (spec "Minimal OAuth scopes"): all Sheets
+          // access goes through the service account, never the user's token.
+          scope: 'openid email profile',
+          // Account-picker pre-filter only — enforcement is the hd claim
+          // check in the signIn callback (spec "Workspace domain-restricted
+          // sign-in").
+          hd: ALLOWED_WORKSPACE_DOMAIN,
         },
       },
     }),
@@ -29,19 +33,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     error: "/auth/error",
   },
   callbacks: {
-    async signIn({ user }) {
-      if (!user.email) return false;
-
-      try {
-        const hasPermission = await checkSheetPermission(user.email);
-        if (!hasPermission) {
-          return "/auth/unauthorized";
-        }
-        return true;
-      } catch (error) {
-        console.error("Permission check failed:", error);
-        return "/auth/error?error=VerificationFailed";
-      }
+    // Workspace domain gate (spec "Workspace domain-restricted sign-in"):
+    // pure claim check on the signed ID token — no whitelist, no API call.
+    async signIn({ profile }) {
+      if (!verifyWorkspaceProfile(profile)) return "/auth/unauthorized";
+      return true;
+    },
+    // Absolute re-auth window (spec "Periodic re-authentication window").
+    async jwt({ token, trigger }) {
+      return enforceReauthWindow(token, trigger);
     },
   },
 });
