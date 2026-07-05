@@ -32,16 +32,33 @@ export default function WeeklyTimeline({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
 
-    const dpr = window.devicePixelRatio || 1;
-    const displayW = canvas.clientWidth;
-    const displayH = canvas.clientHeight;
-    canvas.width = displayW * dpr;
-    canvas.height = displayH * dpr;
-    ctx.scale(dpr, dpr);
-    draw(ctx, displayW, displayH);
+    const render = () => {
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      const dpr = window.devicePixelRatio || 1;
+      const displayW = canvas.clientWidth;
+      const displayH = canvas.clientHeight;
+      canvas.width = displayW * dpr;
+      canvas.height = displayH * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      draw(ctx, displayW, displayH);
+    };
+
+    render();
+
+    // Debounced redraw on resize: the bitmap is sized to the CSS box, so
+    // without this a window resize leaves the chart stretched and blurry.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const observer = new ResizeObserver(() => {
+      clearTimeout(timer);
+      timer = setTimeout(render, 150);
+    });
+    observer.observe(canvas);
+    return () => {
+      clearTimeout(timer);
+      observer.disconnect();
+    };
   }, [draw]);
 
   return (

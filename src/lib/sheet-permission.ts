@@ -1,33 +1,18 @@
-import { JWT } from "google-auth-library";
+import { googleAccessToken } from "./google-auth";
 
 const SPREADSHEET_ID = "16Ojc4QSnZ5XR3AQ3QZIMKa0q6XdnGZ15tyOKk7sTbZc";
 // Column D = index 3 (0-indexed)
 const PERMISSION_COLUMN_INDEX = 3;
 
-function getAuthClient() {
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  const privateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
-
-  if (!email || !privateKey) {
-    throw new Error("Missing Google Service Account credentials");
-  }
-
-  return new JWT({
-    email,
-    key: privateKey.replace(/\\n/g, "\n"),
-    scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
-  });
-}
-
 export async function checkSheetPermission(userEmail: string): Promise<boolean> {
-  const authClient = getAuthClient();
-  const token = await authClient.authorize();
+  // Shared cached client (readonly scope is a subset of the shared scopes).
+  const accessToken = await googleAccessToken();
 
   // Use fetch directly to avoid googleapis URL encoding issues with Chinese sheet names
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/A:Z`;
   const response = await fetch(url, {
     headers: {
-      Authorization: `Bearer ${token.access_token}`,
+      Authorization: `Bearer ${accessToken}`,
     },
   });
 

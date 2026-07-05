@@ -46,4 +46,36 @@ export async function withTransaction<T>(fn: (client: PoolClient) => Promise<T>)
   }
 }
 
+// Set-based batched UPDATE: applies (id, ...values) tuples through a single
+// UPDATE ... FROM (VALUES ...) statement per chunk instead of one statement
+// per row. `setSql` references v.* columns, e.g.
+//   batchUpdate('task_results', 'result_id', 'filtered_out = v.val::boolean',
+//               ['val'], rows.map(r => [r.id, r.flag]))
+export async function batchUpdate(
+  table: string,
+  idColumn: string,
+  setSql: string,
+  valueNames: string[],
+  tuples: Array<Array<unknown>>,
+  chunkSize = 500
+): Promise<void> {
+  for (let start = 0; start < tuples.length; start += chunkSize) {
+    const chunk = tuples.slice(start, start + chunkSize);
+    const params: unknown[] = [];
+    const values = chunk
+      .map((tuple) => {
+        const base = params.length;
+        params.push(...tuple);
+        return `(${tuple.map((_, k) => `$${base + k + 1}`).join(', ')})`;
+      })
+      .join(', ');
+    await query(
+      `UPDATE ${table} SET ${setSql}
+       FROM (VALUES ${values}) AS v(id, ${valueNames.join(', ')})
+       WHERE ${table}.${idColumn} = v.id`,
+      params
+    );
+  }
+}
+
 export default pool;

@@ -252,7 +252,9 @@ export default function ColumnMappingStep({
           fields.push({ field: 'forum', required: false });
         }
 
-        const preview = computePreview(slot.files, m.mapping);
+        // Cheap count for the header; the full preview scan lives in
+        // SlotPreview's useMemo so it only recomputes for the edited slot.
+        const slotRowCount = slot.files.reduce((n, f) => n + f.data.length, 0);
         const firstFile = slot.files[0];
 
         return (
@@ -267,8 +269,8 @@ export default function ColumnMappingStep({
               </span>
               <span className="text-xs ml-2" style={{ color: '#6b6b6b' }}>
                 {slot.files.length === 1
-                  ? `${firstFile.filename} · ${preview.rowCount} 列`
-                  : `${slot.files.length} 個檔案合併 · 共 ${preview.rowCount} 列`}
+                  ? `${firstFile.filename} · ${slotRowCount} 列`
+                  : `${slot.files.length} 個檔案合併 · 共 ${slotRowCount} 列`}
               </span>
             </div>
 
@@ -306,11 +308,7 @@ export default function ColumnMappingStep({
               </div>
             )}
 
-            <PreviewBlock
-              file={firstFile}
-              mapping={m.mapping}
-              preview={preview}
-            />
+            <SlotPreview files={slot.files} mapping={m.mapping} />
           </div>
         );
       })}
@@ -378,6 +376,21 @@ export default function ColumnMappingStep({
       </div>
     </div>
   );
+}
+
+// Per-slot preview (design "前端效能五件套"): computePreview scans every row of
+// the slot's files, so it recomputes only when THIS slot's files or mapping
+// change — updateMapping keeps other slots' mapping references stable, so
+// editing one dropdown no longer rescans every file on the page.
+function SlotPreview({
+  files,
+  mapping,
+}: {
+  files: UploadedFile[];
+  mapping: ColumnMapping;
+}) {
+  const preview = useMemo(() => computePreview(files, mapping), [files, mapping]);
+  return <PreviewBlock file={files[0]} mapping={mapping} preview={preview} />;
 }
 
 function PreviewBlock({

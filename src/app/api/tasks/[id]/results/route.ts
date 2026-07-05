@@ -2,7 +2,7 @@ import { query } from '@/lib/db';
 import { requireSession } from '@/lib/require-session';
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { response: authResponse } = await requireSession();
@@ -11,13 +11,20 @@ export async function GET(
   try {
     const { id: taskId } = await params;
 
+    // view=chart (spec "Chart-weight results retrieval"): drop the large text
+    // columns — charts need coordinates and flags, not full post texts.
+    const chartView = new URL(request.url).searchParams.get('view') === 'chart';
+    const textColumns = chartView
+      ? `'' AS content_text, NULL AS reasoning, NULL AS source_file`
+      : `r.content_text, r.reasoning, f.filename AS source_file`;
+
     const result = await query(
-      `SELECT r.result_id, r.task_id, r.file_id, r.row_index, r.content_text,
-              r.condition_result, r.x_score, r.y_score, r.reasoning,
+      `SELECT r.result_id, r.task_id, r.file_id, r.row_index,
+              r.condition_result, r.x_score, r.y_score,
               r.engagement_value, r.status,
               r.emotion_calibrated, r.favor_calibrated,
               r.filtered_out, r.not_real_user, r.platform,
-              f.filename as source_file
+              ${textColumns}
        FROM task_results r
        JOIN task_files f ON r.file_id = f.file_id
        WHERE r.task_id = $1

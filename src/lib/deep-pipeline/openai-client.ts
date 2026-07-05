@@ -1,7 +1,46 @@
 import OpenAI from 'openai';
 import type { PromptVersion } from '../prompt-versions';
+import { createSemaphore } from '../semaphore';
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// Global concurrency cap across ALL tasks and modes (spec "Concurrent scoring
+// under a global limit" — the precondition the batch spec demands before
+// row-level parallelism may multiply platform parallelism).
+export const GLOBAL_OPENAI_CONCURRENCY = 16;
+const globalGate = createSemaphore(GLOBAL_OPENAI_CONCURRENCY);
+
+// Classified retry (spec "Classified retry strategy"): only 429/5xx/transport
+// failures are retryable; other 4xx (bad key, bad request) fail immediately.
+const MAX_BACKOFF_MS = 45_000;
+
+function statusOf(err: unknown): number | null {
+  const st = (err as { status?: unknown })?.status;
+  return typeof st === 'number' ? st : null;
+}
+
+function retryAfterMs(err: unknown): number | null {
+  const headers = (err as { headers?: Record<string, string> })?.headers;
+  const raw = headers?.['retry-after'];
+  if (!raw) return null;
+  const seconds = Number(raw);
+  return Number.isFinite(seconds) ? seconds * 1000 : null;
+}
+
+function isRetryable(err: unknown): boolean {
+  const status = statusOf(err);
+  if (status === null) return true; // transport / non-HTTP failure
+  if (status === 429) return true;
+  if (status >= 500) return true;
+  return false;
+}
+
+function backoffMs(attempt: number, err: unknown): number {
+  const hinted = retryAfterMs(err);
+  const base = Math.min(1000 * 2 ** attempt, MAX_BACKOFF_MS);
+  const jittered = base * (1 + Math.random() * 0.3);
+  return Math.min(Math.max(hinted ?? 0, jittered), MAX_BACKOFF_MS);
+}
 
 // Fixed short system message. The filled prompt goes ONLY in the user message —
 // sending prompt_text as system used to transmit the whole template a second
@@ -31,7 +70,10 @@ export async function callJson<T = unknown>({
   let lastError: unknown;
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      const response = await client.chat.completions.create({
+      await globalGate.acquire();
+      let response;
+      try {
+        response = await client.chat.completions.create({
         model: prompt.model_snapshot,
         temperature: Number(prompt.temperature),
         response_format:
@@ -42,7 +84,10 @@ export async function callJson<T = unknown>({
           { role: 'system', content: SYSTEM_MESSAGE },
           { role: 'user', content: userMessage },
         ],
-      });
+        });
+      } finally {
+        globalGate.release();
+      }
       const text = response.choices[0]?.message?.content;
       if (!text || !text.trim()) {
         // Refusal / content filter / length cutoff: a failed attempt for the
@@ -52,8 +97,11 @@ export async function callJson<T = unknown>({
       return JSON.parse(text) as T;
     } catch (err) {
       lastError = err;
+      // Non-retryable client errors (401/400/404...) fail fast — retrying an
+      // invalid API key thousands of times helps nobody.
+      if (!isContentLevelFailure(err) && !isRetryable(err)) break;
       if (attempt < retries - 1) {
-        await sleep(Math.pow(2, attempt) * 500);
+        await sleep(backoffMs(attempt, err));
       }
     }
   }

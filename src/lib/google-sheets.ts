@@ -1,5 +1,5 @@
-import { JWT } from 'google-auth-library';
-import { query } from './db';
+import { googleAccessToken } from './google-auth';
+import { query, withTransaction } from './db';
 
 const SHEETS_BASE = 'https://sheets.googleapis.com/v4';
 
@@ -45,33 +45,18 @@ const DETAIL_HEADERS = [
   'unscorable_note',
 ];
 
-function authClient() {
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  const privateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY;
-  if (!email || !privateKey) {
-    throw new Error('Missing Google service account credentials');
-  }
-  return new JWT({
-    email,
-    key: privateKey.replace(/\\n/g, '\n'),
-    scopes: [
-      'https://www.googleapis.com/auth/spreadsheets',
-      'https://www.googleapis.com/auth/drive.file',
-    ],
-  });
-}
-
 async function authorizedFetch(
   url: string,
   init: RequestInit & { method?: string } = {}
 ): Promise<Response> {
-  const auth = authClient();
-  const token = await auth.authorize();
+  // Shared client: the token is cached and auto-renewed, not re-exchanged
+  // per call (spec "Exactly one spreadsheet per brand", token-reuse clause).
+  const token = await googleAccessToken();
   const res = await fetch(url, {
     ...init,
     headers: {
       ...(init.headers ?? {}),
-      Authorization: `Bearer ${token.access_token}`,
+      Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
   });
@@ -107,6 +92,26 @@ export async function provisionBrandSheet(
 ): Promise<GoogleSheetLink> {
   const existing = await getBrandSheetLink(brandId);
   if (existing) return existing;
+
+  // Per-brand mutex (spec "Exactly one spreadsheet per brand"): concurrent
+  // provisioners serialize on a transaction-scoped advisory lock; the loser
+  // wakes up, re-reads the link, and returns the winner's spreadsheet.
+  return await withTransaction(async (client) => {
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [brandId]);
+    const raced = await client.query(
+      `SELECT brand_id, spreadsheet_id, sheet_tab_map, last_synced_at
+       FROM google_sheet_links WHERE brand_id = $1`,
+      [brandId]
+    );
+    if (raced.rows.length > 0) return raced.rows[0] as GoogleSheetLink;
+    return await createBrandSheet(brandId, brandName);
+  });
+}
+
+async function createBrandSheet(
+  brandId: string,
+  brandName: string
+): Promise<GoogleSheetLink> {
 
   // 1. Create spreadsheet with all tabs in one call
   const tabs = ['summary', ...PLATFORM_TABS, ANALYST_NOTES_TAB];

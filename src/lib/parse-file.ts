@@ -30,6 +30,8 @@ function parseCsv(file: File): Promise<ParsedFile> {
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
+      // Parse off the main thread so multi-MB CSVs don't freeze the UI.
+      worker: true,
       complete(results) {
         const data = results.data as Record<string, unknown>[];
         const columns = results.meta.fields || [];

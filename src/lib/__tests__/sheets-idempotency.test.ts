@@ -3,7 +3,7 @@ import { startTestDb, type TestDb } from './test-db';
 
 vi.mock('google-auth-library', () => ({
   JWT: class MockJWT {
-    authorize = async () => ({ access_token: 'fake-token' });
+    getAccessToken = async () => ({ token: 'fake-token' });
   },
 }));
 

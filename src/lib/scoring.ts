@@ -2,6 +2,9 @@ import { query } from './db';
 import { callJson, isContentLevelFailure, parseScore } from './deep-pipeline/openai-client';
 import { exceedsErrorThreshold } from './error-threshold';
 import { claimTask, createHeartbeat } from './task-claim';
+import { mapConcurrent } from './semaphore';
+
+const ROW_CONCURRENCY = 10;
 
 interface ScoringConfig {
   conditionText: string;
@@ -109,7 +112,7 @@ export async function processTask(taskId: string) {
       [taskId]
     );
 
-    for (const row of pendingResults.rows) {
+    await mapConcurrent(pendingResults.rows, ROW_CONCURRENCY, async (row) => {
       try {
         let lastError: Error | null = null;
 
@@ -155,9 +158,8 @@ export async function processTask(taskId: string) {
         }
       } catch {
         // Continue processing remaining items even if one fails catastrophically
-        continue;
       }
-    }
+    });
 
     // Completion failure threshold: a task whose errored rows exceed 1% of
     // its total is a failed task, not a quietly incomplete "completed" one.

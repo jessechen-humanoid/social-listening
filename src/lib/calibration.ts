@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { query, withTransaction } from './db';
+import { batchUpdate, query, withTransaction } from './db';
 
 // ---------------------------------------------------------------------------
 // Quantile mapping
@@ -556,22 +556,26 @@ export async function applyTaskCalibration(taskId: string): Promise<void> {
     [taskId]
   );
 
-  for (const row of rows.rows as Array<{
+  const emotionFn = mapping.mapping_function_emotion;
+  const favorFn = mapping.mapping_function_favor;
+  const updates = (rows.rows as Array<{
     result_id: string;
     emotion_raw: number | null;
     favor_raw: number | null;
-  }>) {
-    const emotionCal =
-      row.emotion_raw !== null
-        ? applyQuantileMapping(mapping.mapping_function_emotion, Number(row.emotion_raw))
-        : null;
-    const favorCal =
-      row.favor_raw !== null
-        ? applyQuantileMapping(mapping.mapping_function_favor, Number(row.favor_raw))
-        : null;
-    await query(
-      `UPDATE task_results SET emotion_calibrated = $1, favor_calibrated = $2 WHERE result_id = $3`,
-      [emotionCal, favorCal, row.result_id]
-    );
-  }
+  }>).map((row) => [
+    row.result_id,
+    row.emotion_raw !== null
+      ? applyQuantileMapping(emotionFn, Number(row.emotion_raw))
+      : null,
+    row.favor_raw !== null
+      ? applyQuantileMapping(favorFn, Number(row.favor_raw))
+      : null,
+  ]);
+  await batchUpdate(
+    'task_results',
+    'result_id',
+    'emotion_calibrated = v.e_cal::numeric, favor_calibrated = v.f_cal::numeric',
+    ['e_cal', 'f_cal'],
+    updates
+  );
 }

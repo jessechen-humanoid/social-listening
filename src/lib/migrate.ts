@@ -1,7 +1,23 @@
-import { query } from './db';
+import { query, withTransaction } from './db';
 import { seedPromptVersions } from './seed-prompts';
 
+// Serializes concurrent migrations (spec "Concurrent-safe migrations"):
+// pg_advisory_xact_lock blocks until the peer's transaction ends and releases
+// automatically — no leak possible. The lock key is an arbitrary app constant.
+const MIGRATE_LOCK_KEY = 714801;
+
 export async function migrate() {
+  await withTransaction(async (client) => {
+    await client.query('SELECT pg_advisory_xact_lock($1)', [MIGRATE_LOCK_KEY]);
+    // Hold the lock for the duration of the DDL below by running it while the
+    // transaction is open — DDL statements themselves run via query() on other
+    // connections, so instead we serialize by keeping this lock transaction
+    // open only as a mutex around runMigrations().
+    await runMigrations();
+  });
+}
+
+async function runMigrations() {
   await query(`
     CREATE TABLE IF NOT EXISTS tasks (
       task_id TEXT PRIMARY KEY,
@@ -120,6 +136,10 @@ export async function migrate() {
   // Tasks born from one batch submission share a batch_id (NULL for legacy /
   // single-created tasks); the history UI groups them into one card.
   await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS batch_id UUID`);
+  // Brand-scoped task lookups (historical summaries, brand task lists).
+  await query(
+    `CREATE INDEX IF NOT EXISTS idx_tasks_brand_mode ON tasks(brand_id, mode, created_at)`
+  );
 
   // Add FK on tasks.brand_id (no IF NOT EXISTS for ALTER TABLE ADD CONSTRAINT)
   await query(`

@@ -1,8 +1,13 @@
-import { query } from '../db';
+import { batchUpdate, query } from '../db';
 import type { PromptVersion } from '../prompt-versions';
 import { DEEP_STAGES, type DeepStageName } from '../seed-prompts';
 import { callJson, fillPlaceholders, isContentLevelFailure, parseScore, parseBoolFlag } from './openai-client';
 import { parentKey, postKey } from '../fb-post-key';
+import { mapConcurrent } from '../semaphore';
+
+// Rows scored concurrently within one task; the module-level semaphore in
+// openai-client caps GLOBAL concurrency across all tasks at 16.
+const ROW_CONCURRENCY = 10;
 
 export interface StageContext {
   taskId: string;
@@ -46,7 +51,7 @@ export async function runStageARelatedFilter(ctx: StageContext): Promise<StageOu
   const rows: ScoredRow[] = pending.rows;
   let outputCount = 0;
 
-  for (const row of rows) {
+  await mapConcurrent(rows, ROW_CONCURRENCY, async (row) => {
     const userMessage = fillPlaceholders(prompt.prompt_text, {
       brand: ctx.brandName,
       content: row.content_text || '',
@@ -72,7 +77,7 @@ export async function runStageARelatedFilter(ctx: StageContext): Promise<StageOu
         [status, `A_related_filter: ${msg}`, row.result_id]
       );
     }
-  }
+  });
 
   return { inputCount: rows.length, outputCount };
 }
@@ -96,7 +101,7 @@ export async function runStageAEmotionFavor(ctx: StageContext): Promise<StageOut
   const rows: ScoredRow[] = pending.rows;
   let outputCount = 0;
 
-  for (const row of rows) {
+  await mapConcurrent(rows, ROW_CONCURRENCY, async (row) => {
     const userMessage = fillPlaceholders(prompt.prompt_text, {
       brand: ctx.brandName,
       content: row.content_text || '',
@@ -139,7 +144,7 @@ export async function runStageAEmotionFavor(ctx: StageContext): Promise<StageOut
         [status, `A_emotion_favor: ${msg}`, row.result_id]
       );
     }
-  }
+  });
 
   return { inputCount: rows.length, outputCount };
 }
@@ -195,16 +200,16 @@ export async function runStageBLink(ctx: StageContext): Promise<StageOutcome> {
 
   let matched = 0;
   let kept = 0;
+  // Matching stays in JS (normalized keys); write-back is set-based
+  // (spec "Batched non-AI stage writes").
+  const updates: Array<Array<unknown>> = [];
   for (const row of stageB.rows as Array<{ result_id: string; parent_post_url: string | null }>) {
     const ref = row.parent_post_url
       ? postByKey.get(row.parent_post_url) ?? postByKey.get(parentKey(row.parent_post_url))
       : undefined;
 
     if (!ref) {
-      await query(
-        `UPDATE task_results SET filtered_out = TRUE, status = 'B_link_done' WHERE result_id = $1`,
-        [row.result_id]
-      );
+      updates.push([row.result_id, true, row.parent_post_url]);
       continue;
     }
 
@@ -212,13 +217,16 @@ export async function runStageBLink(ctx: StageContext): Promise<StageOutcome> {
     // Rewrite parent_post_url to the matched post's canonical URL so downstream
     // URL joins (B_emotion_favor) keep working unchanged. Giveaway-post comments
     // are excluded here, exactly like the Python pipeline's pre-pairing skip.
-    await query(
-      `UPDATE task_results SET filtered_out = $1, parent_post_url = $2, status = 'B_link_done'
-       WHERE result_id = $3`,
-      [ref.giveaway, ref.postUrl, row.result_id]
-    );
+    updates.push([row.result_id, ref.giveaway, ref.postUrl]);
     if (!ref.giveaway) kept++;
   }
+  await batchUpdate(
+    'task_results',
+    'result_id',
+    "filtered_out = v.f_out::boolean, parent_post_url = v.p_url, status = 'B_link_done'",
+    ['f_out', 'p_url'],
+    updates
+  );
 
   console.log(
     `B_link (${ctx.taskId}): ${matched}/${stageB.rows.length} comments matched, ${kept} kept after giveaway filter`
@@ -245,7 +253,7 @@ export async function runStageBTagFriendFilter(ctx: StageContext): Promise<Stage
   const rows: ScoredRow[] = pending.rows;
   let kept = 0;
 
-  for (const row of rows) {
+  await mapConcurrent(rows, ROW_CONCURRENCY, async (row) => {
     const userMessage = fillPlaceholders(prompt.prompt_text, {
       message: row.content_text || '',
     });
@@ -272,7 +280,7 @@ export async function runStageBTagFriendFilter(ctx: StageContext): Promise<Stage
         [status, `B_tag_friend_filter: ${msg}`, row.result_id]
       );
     }
-  }
+  });
 
   return { inputCount: rows.length, outputCount: kept };
 }
@@ -331,15 +339,18 @@ export async function runStageBEmotionFavor(ctx: StageContext): Promise<StageOut
     groups.get(r.parent_post_url)!.push(r);
   }
 
-  let outputCount = 0;
+  const batches: CommentBatchRow[][] = [];
   for (const [, group] of groups) {
     for (let i = 0; i < group.length; i += COMMENT_BATCH_SIZE) {
-      const batch = group.slice(i, i + COMMENT_BATCH_SIZE);
-      await ctx.heartbeat?.();
-      const ok = await scoreCommentBatch(prompt, ctx.brandName, batch);
-      outputCount += ok;
+      batches.push(group.slice(i, i + COMMENT_BATCH_SIZE));
     }
   }
+  let outputCount = 0;
+  await mapConcurrent(batches, ROW_CONCURRENCY, async (batch) => {
+    await ctx.heartbeat?.();
+    const ok = await scoreCommentBatch(prompt, ctx.brandName, batch);
+    outputCount += ok;
+  });
 
   return { inputCount: rows.length, outputCount };
 }
@@ -455,14 +466,19 @@ export async function runStageCDedupe(ctx: StageContext): Promise<StageOutcome> 
   );
 
   let kept = 0;
+  const dedupeUpdates: Array<Array<unknown>> = [];
   for (const row of stageC.rows as Array<{ result_id: string; post_url: string | null }>) {
     const dup = row.post_url ? seen.has(row.post_url) : false;
-    await query(
-      `UPDATE task_results SET filtered_out = $1, status = 'C_dedupe_done' WHERE result_id = $2`,
-      [dup, row.result_id]
-    );
+    dedupeUpdates.push([row.result_id, dup]);
     if (!dup) kept++;
   }
+  await batchUpdate(
+    'task_results',
+    'result_id',
+    "filtered_out = v.f_out::boolean, status = 'C_dedupe_done'",
+    ['f_out'],
+    dedupeUpdates
+  );
 
   return { inputCount: stageC.rows.length, outputCount: kept };
 }
@@ -486,7 +502,7 @@ export async function runStageCEmotionFavor(ctx: StageContext): Promise<StageOut
   const rows: ScoredRow[] = pending.rows;
   let outputCount = 0;
 
-  for (const row of rows) {
+  await mapConcurrent(rows, ROW_CONCURRENCY, async (row) => {
     const userMessage = fillPlaceholders(prompt.prompt_text, {
       brand: ctx.brandName,
       comment: row.content_text || '',
@@ -521,7 +537,7 @@ export async function runStageCEmotionFavor(ctx: StageContext): Promise<StageOut
         [status, `C_emotion_favor: ${msg}`, row.result_id]
       );
     }
-  }
+  });
 
   return { inputCount: rows.length, outputCount };
 }

@@ -4,15 +4,7 @@ import {
   createBrand,
   listBrands,
 } from '@/lib/brands';
-import { migrate } from '@/lib/migrate';
-
-let migrated = false;
-async function ensureMigrated() {
-  if (!migrated) {
-    await migrate();
-    migrated = true;
-  }
-}
+import { ensureMigrated } from '@/lib/ensure-migrated';
 
 export async function GET() {
   const session = await auth();

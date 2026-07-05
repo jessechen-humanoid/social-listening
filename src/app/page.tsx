@@ -96,7 +96,7 @@ export default function Home() {
 
       // No longer auto-redirect to processing — history page shows progress inline
     } catch { /* ignore */ }
-  }, [browserUuid, view]);
+  }, [browserUuid]);
 
   useEffect(() => {
     if (!browserUuid) return;
@@ -281,7 +281,7 @@ export default function Home() {
         tasks.map(async (t) => {
           const [progressRes, resultsRes] = await Promise.all([
             fetch(`/api/tasks/${t.task_id}/progress`),
-            fetch(`/api/tasks/${t.task_id}/results`),
+            fetch(`/api/tasks/${t.task_id}/results?view=chart`),
           ]);
           const [progress, resultsData] = await Promise.all([
             progressRes.json(),

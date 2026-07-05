@@ -1,5 +1,5 @@
-import { query } from '@/lib/db';
-import { migrate } from '@/lib/migrate';
+import { query, withTransaction } from '@/lib/db';
+import { ensureMigrated } from '@/lib/ensure-migrated';
 import { requireSession } from '@/lib/require-session';
 import { processTask } from '@/lib/scoring';
 import {
@@ -25,15 +25,6 @@ import {
   type DeepFileInput,
 } from '@/lib/deep-pipeline/orchestrator';
 import { v4 as uuidv4 } from 'uuid';
-
-let migrated = false;
-
-async function ensureMigrated() {
-  if (!migrated) {
-    await migrate();
-    migrated = true;
-  }
-}
 
 // Stages applicable to a deep task vary by platform: FB runs A+B+C, others run A only.
 function deepStagesForPlatform(platform: Platform): Array<typeof ALL_DEEP_STAGES[number]> {
@@ -210,48 +201,63 @@ export async function POST(request: Request) {
       });
     }
 
-    // Light-mode path (unchanged from prior behavior)
+    // Light-mode path: batched, transactional initialization (spec "Atomic
+    // batched task initialization").
     let totalItems = 0;
-
-    await query(
-      `INSERT INTO tasks (task_id, browser_uuid, status, config, total_items, mode)
-       VALUES ($1, $2, 'pending', $3, 0, 'light')`,
-      [taskId, browserUuid, JSON.stringify(config)]
-    );
-
     const maxRows = config.maxRows > 0 ? config.maxRows : Infinity;
 
-    for (const file of files) {
-      if (totalItems >= maxRows) break;
-
-      const fileId = uuidv4();
-      const rowsToProcess = Math.min(file.data.length, maxRows - totalItems);
-
-      await query(
-        `INSERT INTO task_files (file_id, task_id, filename, column_mapping, row_count)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [fileId, taskId, file.filename, JSON.stringify(file.columnMapping), rowsToProcess]
+    await withTransaction(async (client) => {
+      await client.query(
+        `INSERT INTO tasks (task_id, browser_uuid, status, config, total_items, mode)
+         VALUES ($1, $2, 'pending', $3, 0, 'light')`,
+        [taskId, browserUuid, JSON.stringify(config)]
       );
 
-      for (let i = 0; i < rowsToProcess; i++) {
-        const row = file.data[i];
-        const resultId = uuidv4();
-        const contentText = String(row[file.contentColumn] || '');
-        const engagementValue = file.engagementColumn
-          ? Number(row[file.engagementColumn]) || 0
-          : null;
+      for (const file of files) {
+        if (totalItems >= maxRows) break;
 
-        await query(
-          `INSERT INTO task_results (result_id, task_id, file_id, row_index, content_text, engagement_value, status)
-           VALUES ($1, $2, $3, $4, $5, $6, 'pending')`,
-          [resultId, taskId, fileId, totalItems + i, contentText, engagementValue]
+        const fileId = uuidv4();
+        const rowsToProcess = Math.min(file.data.length, maxRows - totalItems);
+
+        await client.query(
+          `INSERT INTO task_files (file_id, task_id, filename, column_mapping, row_count)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [fileId, taskId, file.filename, JSON.stringify(file.columnMapping), rowsToProcess]
         );
+
+        const BATCH = 500;
+        for (let start = 0; start < rowsToProcess; start += BATCH) {
+          const end = Math.min(start + BATCH, rowsToProcess);
+          const params: unknown[] = [];
+          const tuples: string[] = [];
+          for (let i = start; i < end; i++) {
+            const row = file.data[i];
+            const contentText = String(row[file.contentColumn] || '');
+            const engagementValue = file.engagementColumn
+              ? Number(row[file.engagementColumn]) || 0
+              : null;
+            const base = params.length;
+            params.push(uuidv4(), taskId, fileId, totalItems + i, contentText, engagementValue);
+            tuples.push(
+              `(${Array.from({ length: 6 }, (_, k) => `$${base + k + 1}`).join(', ')}, 'pending')`
+            );
+          }
+          await client.query(
+            `INSERT INTO task_results (result_id, task_id, file_id, row_index, content_text, engagement_value, status)
+             VALUES ${tuples.join(', ')}`,
+            params
+          );
+        }
+
+        totalItems += rowsToProcess;
       }
 
-      totalItems += rowsToProcess;
-    }
+      await client.query('UPDATE tasks SET total_items = $1 WHERE task_id = $2', [
+        totalItems,
+        taskId,
+      ]);
+    });
 
-    await query('UPDATE tasks SET total_items = $1 WHERE task_id = $2', [totalItems, taskId]);
     processTask(taskId).catch(() => {});
 
     return Response.json({ task_id: taskId, mode: 'light' });

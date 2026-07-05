@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { query } from '../db';
+import { query, withTransaction } from '../db';
 import type { Platform } from '../brands';
 import type { PromptVersion } from '../prompt-versions';
 import { getPromptByVersionId, getTaskPromptBindings } from '../prompt-versions';
@@ -91,6 +91,8 @@ export interface DeepFileInput {
 
 // Initialize task_files + task_results + deep_task_stages records for a deep task.
 // Idempotent at the deep_task_stages level (caller guarantees task_id is fresh).
+const INIT_BATCH_SIZE = 500;
+
 export async function initializeDeepTask(input: {
   taskId: string;
   platform: Platform;
@@ -100,74 +102,87 @@ export async function initializeDeepTask(input: {
 
   let totalItems = 0;
 
-  for (const file of input.files) {
-    const fileId = uuidv4();
-    const bucket = ROLE_TO_BUCKET[file.role];
-    const filteredRows = applyForumFilter(file.data, file.columnMapping, file.forumFilter);
+  // Atomic batched initialization (spec "Atomic batched task initialization"):
+  // everything inside one transaction — an interrupted init leaves zero rows —
+  // and rows insert in multi-row batches instead of one round-trip per row.
+  await withTransaction(async (client) => {
+    for (const file of input.files) {
+      const fileId = uuidv4();
+      const bucket = ROLE_TO_BUCKET[file.role];
+      const filteredRows = applyForumFilter(file.data, file.columnMapping, file.forumFilter);
 
-    await query(
-      `INSERT INTO task_files (file_id, task_id, filename, column_mapping, row_count, role)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [
-        fileId,
-        input.taskId,
-        file.filename,
-        JSON.stringify(file.columnMapping),
-        filteredRows.length,
-        file.role,
-      ]
-    );
-
-    for (let i = 0; i < filteredRows.length; i++) {
-      const row = filteredRows[i];
-      const m = file.columnMapping;
-      const content = m.content ? String(row[m.content] ?? '') : '';
-      const engagement = m.engagement_value ? toNumber(row[m.engagement_value]) : null;
-      const postedAt = m.posted_at ? toIsoOrNull(row[m.posted_at]) : null;
-      const postUrl = m.post_url ? toStringOrNull(row[m.post_url]) : null;
-      const commentUrl = m.comment_url ? toStringOrNull(row[m.comment_url]) : null;
-      const parentPostUrl = m.parent_post_url
-        ? toStringOrNull(row[m.parent_post_url])
-        : null;
-      const authorId = m.author_id ? toStringOrNull(row[m.author_id]) : null;
-
-      await query(
-        `INSERT INTO task_results
-           (result_id, task_id, file_id, row_index, content_text,
-            engagement_value, posted_at, post_url, parent_post_url, author_id,
-            platform, stage_name, status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending')`,
+      await client.query(
+        `INSERT INTO task_files (file_id, task_id, filename, column_mapping, row_count, role)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
         [
-          uuidv4(),
-          input.taskId,
           fileId,
-          totalItems + i,
-          content,
-          engagement,
-          postedAt,
-          // For comment-bucket rows, post_url is the comment's own URL; for stage A rows
-          // it's the post's URL. Both share the column.
-          bucket === 'A' ? postUrl : commentUrl ?? postUrl,
-          parentPostUrl,
-          authorId,
-          input.platform,
-          bucket,
+          input.taskId,
+          file.filename,
+          JSON.stringify(file.columnMapping),
+          filteredRows.length,
+          file.role,
         ]
       );
+
+      const m = file.columnMapping;
+      for (let start = 0; start < filteredRows.length; start += INIT_BATCH_SIZE) {
+        const chunk = filteredRows.slice(start, start + INIT_BATCH_SIZE);
+        const params: unknown[] = [];
+        const tuples = chunk.map((row, j) => {
+          const content = m.content ? String(row[m.content] ?? '') : '';
+          const engagement = m.engagement_value ? toNumber(row[m.engagement_value]) : null;
+          const postedAt = m.posted_at ? toIsoOrNull(row[m.posted_at]) : null;
+          const postUrl = m.post_url ? toStringOrNull(row[m.post_url]) : null;
+          const commentUrl = m.comment_url ? toStringOrNull(row[m.comment_url]) : null;
+          const parentPostUrl = m.parent_post_url
+            ? toStringOrNull(row[m.parent_post_url])
+            : null;
+          const authorId = m.author_id ? toStringOrNull(row[m.author_id]) : null;
+          const base = params.length;
+          params.push(
+            uuidv4(),
+            input.taskId,
+            fileId,
+            totalItems + start + j,
+            content,
+            engagement,
+            postedAt,
+            // For comment-bucket rows, post_url is the comment's own URL; for
+            // stage A rows it's the post's URL. Both share the column.
+            bucket === 'A' ? postUrl : commentUrl ?? postUrl,
+            parentPostUrl,
+            authorId,
+            input.platform,
+            bucket
+          );
+          return `(${Array.from({ length: 12 }, (_, k) => `$${base + k + 1}`).join(', ')}, 'pending')`;
+        });
+        await client.query(
+          `INSERT INTO task_results
+             (result_id, task_id, file_id, row_index, content_text,
+              engagement_value, posted_at, post_url, parent_post_url, author_id,
+              platform, stage_name, status)
+           VALUES ${tuples.join(', ')}`,
+          params
+        );
+      }
+      totalItems += filteredRows.length;
     }
-    totalItems += filteredRows.length;
-  }
 
-  for (const stage of stages) {
-    await query(
-      `INSERT INTO deep_task_stages (task_id, stage_name, status, input_count, output_count)
-       VALUES ($1, $2, 'pending', 0, 0)
-       ON CONFLICT (task_id, stage_name) DO NOTHING`,
-      [input.taskId, stage]
-    );
-  }
+    for (const stage of stages) {
+      await client.query(
+        `INSERT INTO deep_task_stages (task_id, stage_name, status, input_count, output_count)
+         VALUES ($1, $2, 'pending', 0, 0)
+         ON CONFLICT (task_id, stage_name) DO NOTHING`,
+        [input.taskId, stage]
+      );
+    }
 
-  await query(`UPDATE tasks SET total_items = $1 WHERE task_id = $2`, [totalItems, input.taskId]);
+    await client.query(`UPDATE tasks SET total_items = $1 WHERE task_id = $2`, [
+      totalItems,
+      input.taskId,
+    ]);
+  });
 
   return { totalItems, stages };
 }

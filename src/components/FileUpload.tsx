@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { parseFile } from '@/lib/parse-file';
 import type { UploadedFile } from '@/lib/types';
@@ -87,22 +87,31 @@ async function buildUploadedFile(
 
 export default function FileUpload({ files, onChange, mode = 'light' }: FileUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  // Parsing runs off the main thread (Papa worker) — surface it, or large
+  // files look like a dead click. Keyed per slot in deep mode.
+  const [parsingSlots, setParsingSlots] = useState<Set<string>>(new Set());
+  const [parsingLight, setParsingLight] = useState(false);
 
   const handleFiles = useCallback(async (fileList: FileList) => {
     const newFiles: UploadedFile[] = [];
 
-    for (const file of Array.from(fileList)) {
-      const ext = file.name.split('.').pop()?.toLowerCase();
-      if (!ext || !['csv', 'xlsx', 'xls'].includes(ext)) {
-        alert(`${file.name}：不支援的格式，請上傳 CSV 或 Excel (.xlsx) 檔案`);
-        continue;
-      }
+    setParsingLight(true);
+    try {
+      for (const file of Array.from(fileList)) {
+        const ext = file.name.split('.').pop()?.toLowerCase();
+        if (!ext || !['csv', 'xlsx', 'xls'].includes(ext)) {
+          alert(`${file.name}：不支援的格式，請上傳 CSV 或 Excel (.xlsx) 檔案`);
+          continue;
+        }
 
-      try {
-        newFiles.push(await buildUploadedFile(file));
-      } catch (err) {
-        alert(err instanceof Error ? err.message : '檔案解析失敗');
+        try {
+          newFiles.push(await buildUploadedFile(file));
+        } catch (err) {
+          alert(err instanceof Error ? err.message : '檔案解析失敗');
+        }
       }
+    } finally {
+      setParsingLight(false);
     }
 
     onChange([...files, ...newFiles]);
@@ -123,30 +132,48 @@ export default function FileUpload({ files, onChange, mode = 'light' }: FileUplo
     onChange(files.map(f => f.id === id ? { ...f, [field]: value } : f));
   }, [files, onChange]);
 
-  const handleSlotUpload = useCallback(async (platform: Platform, role: FileRole, file: File) => {
-    const ext = file.name.split('.').pop()?.toLowerCase();
-    if (!ext || !['csv', 'xlsx', 'xls'].includes(ext)) {
-      alert(`${file.name}：不支援的格式，請上傳 CSV 或 Excel (.xlsx) 檔案`);
-      return;
-    }
+  // One batch per drop/selection with a single onChange at the end: per-file
+  // onChange calls would each spread the same stale `files` snapshot, so a
+  // multi-file drop would keep only the last file once parses overlap.
+  const handleSlotUpload = useCallback(async (platform: Platform, role: FileRole, dropped: File[]) => {
+    const slotId = `${platform}:${role}`;
+    setParsingSlots(prev => new Set(prev).add(slotId));
+    const accepted: UploadedFile[] = [];
     try {
-      const uploaded = { ...(await buildUploadedFile(file, role, platform)), platform };
-      // Multi-file slot (Qsearch split exports): all files in a slot share one
-      // column mapping, so headers must match the slot's first file exactly.
-      const existing = files.filter(f => f.platform === platform && f.role === role);
-      if (existing.length > 0) {
-        const cmp = compareHeaderSets(existing[0].columns, uploaded.columns);
-        if (!cmp.same) {
-          alert(
-            `${file.name} 的欄位與 ${existing[0].filename} 不一致，無法放入同一槽位。\n${describeHeaderMismatch(cmp)}`
-          );
-          return;
+      for (const file of dropped) {
+        const ext = file.name.split('.').pop()?.toLowerCase();
+        if (!ext || !['csv', 'xlsx', 'xls'].includes(ext)) {
+          alert(`${file.name}：不支援的格式，請上傳 CSV 或 Excel (.xlsx) 檔案`);
+          continue;
+        }
+        try {
+          const uploaded = { ...(await buildUploadedFile(file, role, platform)), platform };
+          // Multi-file slot (Qsearch split exports): all files in a slot share one
+          // column mapping, so headers must match the slot's first file exactly.
+          const reference =
+            files.find(f => f.platform === platform && f.role === role) ?? accepted[0];
+          if (reference) {
+            const cmp = compareHeaderSets(reference.columns, uploaded.columns);
+            if (!cmp.same) {
+              alert(
+                `${file.name} 的欄位與 ${reference.filename} 不一致，無法放入同一槽位。\n${describeHeaderMismatch(cmp)}`
+              );
+              continue;
+            }
+          }
+          accepted.push(uploaded);
+        } catch (err) {
+          alert(err instanceof Error ? err.message : '檔案解析失敗');
         }
       }
-      onChange([...files, uploaded]);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : '檔案解析失敗');
+    } finally {
+      setParsingSlots(prev => {
+        const next = new Set(prev);
+        next.delete(slotId);
+        return next;
+      });
     }
+    if (accepted.length > 0) onChange([...files, ...accepted]);
   }, [files, onChange]);
 
   // Multi-sheet workbooks: re-parse the original file with the chosen sheet,
@@ -188,6 +215,7 @@ export default function FileUpload({ files, onChange, mode = 'light' }: FileUplo
                   platform={platform}
                   role={role}
                   files={sectionFiles.filter(f => f.role === role)}
+                  parsing={parsingSlots.has(`${platform}:${role}`)}
                   onUpload={handleSlotUpload}
                   onRemove={handleRemove}
                   onSheetChange={handleSheetChange}
@@ -213,7 +241,7 @@ export default function FileUpload({ files, onChange, mode = 'light' }: FileUplo
         onClick={() => inputRef.current?.click()}
       >
         <p className="text-sm" style={{ color: '#6b6b6b' }}>
-          拖放檔案至此，或點擊上傳
+          {parsingLight ? '解析中…' : '拖放檔案至此，或點擊上傳'}
         </p>
         <p className="text-xs mt-1" style={{ color: '#c0c0c0' }}>
           支援 CSV、Excel (.xlsx)
@@ -299,20 +327,19 @@ interface RoleSlotProps {
   platform: Platform;
   role: FileRole;
   files: UploadedFile[];
-  onUpload: (platform: Platform, role: FileRole, file: File) => void;
+  parsing: boolean;
+  onUpload: (platform: Platform, role: FileRole, files: File[]) => void;
   onRemove: (id: string) => void;
   onSheetChange: (id: string, sheetName: string) => void;
 }
 
-function RoleSlot({ platform, role, files, onUpload, onRemove, onSheetChange }: RoleSlotProps) {
+function RoleSlot({ platform, role, files, parsing, onUpload, onRemove, onSheetChange }: RoleSlotProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     // Multi-file slot: accept every dropped file (Qsearch split exports).
-    for (const dropped of Array.from(e.dataTransfer.files)) {
-      onUpload(platform, role, dropped);
-    }
+    onUpload(platform, role, Array.from(e.dataTransfer.files));
   };
 
   return (
@@ -367,14 +394,20 @@ function RoleSlot({ platform, role, files, onUpload, onRemove, onSheetChange }: 
       ))}
 
       <div
-        className="rounded-lg p-4 text-center cursor-pointer transition"
-        style={{ border: '2px dashed #e8e8e5' }}
+        className="rounded-lg p-4 text-center transition"
+        style={{
+          border: '2px dashed #e8e8e5',
+          cursor: parsing ? 'wait' : 'pointer',
+          opacity: parsing ? 0.6 : 1,
+        }}
         onDragOver={e => e.preventDefault()}
-        onDrop={handleDrop}
-        onClick={() => inputRef.current?.click()}
+        onDrop={parsing ? e => e.preventDefault() : handleDrop}
+        onClick={() => { if (!parsing) inputRef.current?.click(); }}
       >
         <p className="text-sm" style={{ color: '#6b6b6b' }}>
-          {files.length === 0 ? '拖放檔案至此，或點擊上傳' : '加入更多分割檔（欄位須相同）'}
+          {parsing
+            ? '解析中…'
+            : files.length === 0 ? '拖放檔案至此，或點擊上傳' : '加入更多分割檔（欄位須相同）'}
         </p>
         <p className="text-xs mt-1" style={{ color: '#c0c0c0' }}>
           支援 CSV、Excel (.xlsx)，可多檔
@@ -386,9 +419,7 @@ function RoleSlot({ platform, role, files, onUpload, onRemove, onSheetChange }: 
           multiple
           className="hidden"
           onChange={e => {
-            for (const f of Array.from(e.target.files ?? [])) {
-              onUpload(platform, role, f);
-            }
+            onUpload(platform, role, Array.from(e.target.files ?? []));
             e.target.value = '';
           }}
         />

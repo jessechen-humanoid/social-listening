@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect, useCallback, useMemo } from 'react';
 import { applyJitter } from '@/lib/jitter';
 import { engagementWeight } from '@/lib/engagement-weight';
 import type { TaskResult } from '@/lib/types';
@@ -27,6 +27,14 @@ interface DeepResultFields {
   not_real_user?: boolean | null;
   platform?: string | null;
 }
+
+// Default alpha tuned for regular volumes (Python parity: c='b', ~0.4).
+// High-volume brands lower these via platform_settings.scatter_alpha.
+// Module constant: an inline default object would be a new reference every
+// render and permanently invalidate the draw useCallback below.
+const DEFAULT_PLATFORM_ALPHA: Record<string, number> = {
+  fb: 0.4, ig: 0.4, threads: 0.4, dcard: 0.4,
+};
 
 const QUADRANT_LABELS = [
   { name: '超級黑粉', x: 0, y: 1 },   // upper-left
@@ -74,13 +82,11 @@ export default function ScatterPlot({
   dotColor = '#404040',
   exportMode = false,
   weighted = false,
-  // Default alpha tuned for regular volumes (Python parity: c='b', ~0.4).
-  // High-volume brands lower these via platform_settings.scatter_alpha.
-  platformAlpha = { fb: 0.4, ig: 0.4, threads: 0.4, dcard: 0.4 },
+  platformAlpha = DEFAULT_PLATFORM_ALPHA,
 }: ScatterPlotProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  const filteredResults = results.filter(r => {
+  const filteredResults = useMemo(() => results.filter(r => {
     if (weighted) {
       const d = r as TaskResult & DeepResultFields;
       if (d.filtered_out || d.not_real_user) return false;
@@ -93,7 +99,7 @@ export default function ScatterPlot({
       return r.condition_result === true;
     }
     return true;
-  });
+  }), [results, weighted, conditionFilterEnabled, conditionText]);
 
   const draw = useCallback((ctx: CanvasRenderingContext2D, width: number, height: number) => {
     const bgColor = exportMode ? '#ffffff' : '#fafaf8';
@@ -231,17 +237,33 @@ export default function ScatterPlot({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
 
-    const dpr = window.devicePixelRatio || 1;
-    const displayW = canvas.clientWidth;
-    const displayH = canvas.clientHeight;
-    canvas.width = displayW * dpr;
-    canvas.height = displayH * dpr;
-    ctx.scale(dpr, dpr);
+    const render = () => {
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      const dpr = window.devicePixelRatio || 1;
+      const displayW = canvas.clientWidth;
+      const displayH = canvas.clientHeight;
+      canvas.width = displayW * dpr;
+      canvas.height = displayH * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      draw(ctx, displayW, displayH);
+    };
 
-    draw(ctx, displayW, displayH);
+    render();
+
+    // Debounced redraw on resize: the bitmap is sized to the CSS box, so
+    // without this a window resize leaves the chart stretched and blurry.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const observer = new ResizeObserver(() => {
+      clearTimeout(timer);
+      timer = setTimeout(render, 150);
+    });
+    observer.observe(canvas);
+    return () => {
+      clearTimeout(timer);
+      observer.disconnect();
+    };
   }, [draw]);
 
   return (
