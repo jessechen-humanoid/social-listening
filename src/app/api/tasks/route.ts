@@ -1,3 +1,5 @@
+import { errorResponse, internalError, validationError } from '@/lib/error-response';
+import { TaskInputSchema, firstIssueMessage } from '@/lib/schemas';
 import { query, withTransaction } from '@/lib/db';
 import { ensureMigrated } from '@/lib/ensure-migrated';
 import { requireSession } from '@/lib/require-session';
@@ -91,9 +93,10 @@ export async function POST(request: Request) {
 
   const contentLength = Number(request.headers.get('content-length') ?? '0');
   if (contentLength > MAX_BODY_BYTES) {
-    return Response.json(
-      { error: `請求內容超過 ${MAX_BODY_BYTES / 1024 / 1024}MB 上限` },
-      { status: 413 }
+    return errorResponse(
+      'PAYLOAD_TOO_LARGE',
+      `請求內容超過 ${MAX_BODY_BYTES / 1024 / 1024}MB 上限`,
+      413
     );
   }
 
@@ -101,18 +104,26 @@ export async function POST(request: Request) {
     await ensureMigrated();
 
     const body = await request.json();
+
+    // Structural gate first (spec "Task creation input validation", zod
+    // clause); business validators below own row caps and role semantics.
+    const parsed = TaskInputSchema.safeParse(body);
+    if (!parsed.success) {
+      return errorResponse('VALIDATION', firstIssueMessage(parsed.error), 400);
+    }
+
     const { browserUuid, config, files, mode } = body;
 
     // Multi-platform batch: one submission → one task per platform, executed
     // sequentially (spec "Batch upload creates one task per platform").
     if (mode === 'deep-batch') {
       if (!browserUuid || !config) {
-        return Response.json({ error: '缺少必要欄位' }, { status: 400 });
+        return errorResponse('VALIDATION', '缺少必要欄位', 400);
       }
       const groups = body.platforms as BatchPlatformGroup[] | undefined;
       const batchValidation = validateBatchInput(groups);
       if (!batchValidation.ok) {
-        return Response.json({ error: batchValidation.error }, { status: batchValidation.status });
+        return validationError(batchValidation.error, batchValidation.status);
       }
       // Validate the shared deep fields once per platform BEFORE creating
       // anything — an invalid batch creates zero tasks.
@@ -126,7 +137,7 @@ export async function POST(request: Request) {
           });
         } catch (err) {
           if (err instanceof DeepTaskValidationError) {
-            return Response.json({ error: err.message, field: err.field }, { status: 400 });
+            return errorResponse('VALIDATION', `${err.field}: ${err.message}`, 400);
           }
           throw err;
         }
@@ -156,12 +167,12 @@ export async function POST(request: Request) {
     }
 
     if (!browserUuid || !config || !files || !Array.isArray(files) || files.length === 0) {
-      return Response.json({ error: '缺少必要欄位' }, { status: 400 });
+      return errorResponse('VALIDATION', '缺少必要欄位', 400);
     }
 
     const validation = validateTaskInput({ mode, config, files });
     if (!validation.ok) {
-      return Response.json({ error: validation.error }, { status: validation.status });
+      return validationError(validation.error, validation.status);
     }
 
     const taskMode: 'light' | 'deep' = validation.mode;
@@ -177,7 +188,7 @@ export async function POST(request: Request) {
         });
       } catch (err) {
         if (err instanceof DeepTaskValidationError) {
-          return Response.json({ error: err.message, field: err.field }, { status: 400 });
+          return errorResponse('VALIDATION', `${err.field}: ${err.message}`, 400);
         }
         throw err;
       }
@@ -262,8 +273,7 @@ export async function POST(request: Request) {
 
     return Response.json({ task_id: taskId, mode: 'light' });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return Response.json({ error: message }, { status: 500 });
+    return internalError(error);
   }
 }
 
@@ -276,24 +286,27 @@ export async function GET(request: Request) {
 
     const { searchParams } = new URL(request.url);
     const browserUuid = searchParams.get('browserUuid');
+    const batchId = searchParams.get('batchId');
 
-    if (!browserUuid) {
-      return Response.json({ error: '缺少 browserUuid' }, { status: 400 });
+    if (!browserUuid && !batchId) {
+      return errorResponse('VALIDATION', '缺少 browserUuid 或 batchId', 400);
     }
 
+    // batchId filter serves the shareable /batch/[batchId] page: tasks are
+    // team-shared, so any member may list a batch by id (browserUuid remains
+    // a display-scoping convenience, not an authorization boundary).
     const result = await query(
       `SELECT task_id, status, config, total_items, completed_items, created_at, updated_at,
               mode, brand_id, time_range_start, time_range_end, platform, sheet_sync_status, batch_id
        FROM tasks
-       WHERE browser_uuid = $1
+       WHERE ${batchId ? 'batch_id' : 'browser_uuid'} = $1
        ORDER BY created_at DESC`,
-      [browserUuid]
+      [batchId ?? browserUuid]
     );
 
     return Response.json({ tasks: result.rows });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return Response.json({ error: message }, { status: 500 });
+    return internalError(error);
   }
 }
 

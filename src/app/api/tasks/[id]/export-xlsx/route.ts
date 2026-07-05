@@ -1,12 +1,13 @@
 import { auth } from '@/lib/auth';
 import { generateDeepXlsx } from '@/lib/deep-export';
+import { unauthorized, internalError } from '@/lib/error-response';
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await auth();
-  if (!session?.user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!session?.user) return unauthorized();
   try {
     const { id } = await params;
     const buf = await generateDeepXlsx(id);
@@ -18,7 +19,6 @@ export async function GET(
       },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return Response.json({ error: message }, { status: 500 });
+    return internalError(error);
   }
 }

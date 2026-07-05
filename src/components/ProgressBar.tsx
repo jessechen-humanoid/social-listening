@@ -10,12 +10,12 @@ export default function ProgressBar({ total, completed, status }: ProgressBarPro
   const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
 
   return (
-    <div className="rounded-xl p-5" style={{ backgroundColor: '#ffffff', border: '1px solid #e8e8e5' }}>
+    <div className="rounded-xl p-5" style={{ backgroundColor: 'var(--color-card)', border: '1px solid var(--color-line)' }}>
       <div className="flex items-center justify-between mb-2">
-        <span className="text-sm font-medium" style={{ color: '#1a1a1a' }}>
+        <span className="text-sm font-medium" style={{ color: 'var(--color-ink)' }}>
           {status === 'completed' ? '分析完成' : status === 'error' ? '分析出錯' : '分析進行中...'}
         </span>
-        <span className="text-sm" style={{ color: '#6b6b6b' }}>
+        <span className="text-sm" style={{ color: 'var(--color-muted)' }}>
           {completed} / {total}（{pct}%）
         </span>
       </div>
@@ -24,7 +24,7 @@ export default function ProgressBar({ total, completed, status }: ProgressBarPro
           className="h-2 rounded-full transition-all duration-300"
           style={{
             width: `${pct}%`,
-            backgroundColor: status === 'error' ? '#c75c5c' : status === 'completed' ? '#7a9e7e' : '#2d2d2d',
+            backgroundColor: status === 'error' ? 'var(--color-danger)' : status === 'completed' ? 'var(--color-success)' : 'var(--color-accent)',
           }}
         />
       </div>

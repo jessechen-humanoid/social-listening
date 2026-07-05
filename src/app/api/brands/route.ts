@@ -1,3 +1,5 @@
+import { errorResponse, unauthorized, internalError } from '@/lib/error-response';
+import { BrandInputSchema, firstIssueMessage } from '@/lib/schemas';
 import { auth } from '@/lib/auth';
 import {
   BrandValidationError,
@@ -8,38 +10,34 @@ import { ensureMigrated } from '@/lib/ensure-migrated';
 
 export async function GET() {
   const session = await auth();
-  if (!session?.user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!session?.user) return unauthorized();
 
   try {
     await ensureMigrated();
     const brands = await listBrands();
     return Response.json({ brands });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return Response.json({ error: message }, { status: 500 });
+    return internalError(error);
   }
 }
 
 export async function POST(request: Request) {
   const session = await auth();
-  if (!session?.user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!session?.user) return unauthorized();
 
   try {
     await ensureMigrated();
-    const body = await request.json();
-    const { name } = body as { name?: string };
-
-    if (typeof name !== 'string' || !name.trim()) {
-      return Response.json({ error: 'name is required' }, { status: 400 });
+    const parsed = BrandInputSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return errorResponse('VALIDATION', firstIssueMessage(parsed.error), 400);
     }
 
-    const brand = await createBrand(name);
+    const brand = await createBrand(parsed.data.name);
     return Response.json({ brand }, { status: 201 });
   } catch (error) {
     if (error instanceof BrandValidationError) {
-      return Response.json({ error: error.message }, { status: 409 });
+      return errorResponse('CONFLICT', error.message, 409);
     }
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return Response.json({ error: message }, { status: 500 });
+    return internalError(error);
   }
 }

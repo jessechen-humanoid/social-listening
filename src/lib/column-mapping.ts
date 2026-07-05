@@ -4,6 +4,13 @@ import type { Platform } from './platforms';
 
 export type FileRole = 'hotpost' | 'hotcomment' | 'comments_from_posts';
 
+// Display labels for file roles — single source for every upload/mapping UI.
+export const ROLE_LABELS: Record<FileRole, string> = {
+  hotpost: 'Hotpost（熱門貼文）',
+  hotcomment: 'Hotcomment（熱門留言）',
+  comments_from_posts: 'Comments-from-posts（貼文留言）',
+};
+
 export type LogicalField =
   | 'content'
   | 'engagement_value'

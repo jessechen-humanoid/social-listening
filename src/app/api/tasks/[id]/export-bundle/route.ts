@@ -1,6 +1,8 @@
 import { auth } from '@/lib/auth';
 import { generateChartBundle, shouldRunBundleAsync } from '@/lib/deep-export';
 import { sanitizeFilename } from '@/lib/sanitize-export';
+import { ExportBundleInputSchema, firstIssueMessage } from '@/lib/schemas';
+import { errorResponse, unauthorized, internalError } from '@/lib/error-response';
 
 interface ChartPayload {
   filename: string;
@@ -13,11 +15,14 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await auth();
-  if (!session?.user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!session?.user) return unauthorized();
   try {
     const { id } = await params;
-    const body = (await request.json()) as { charts?: ChartPayload[] };
-    const charts = body.charts ?? [];
+    const parsed = ExportBundleInputSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return errorResponse('VALIDATION', firstIssueMessage(parsed.error), 400);
+    }
+    const charts: ChartPayload[] = parsed.data.charts ?? [];
 
     // Per spec: > 2000 rows uses async path. The current implementation returns
     // the buffer directly either way; for very large tasks the caller may want
@@ -39,7 +44,6 @@ export async function POST(
       },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return Response.json({ error: message }, { status: 500 });
+    return internalError(error);
   }
 }

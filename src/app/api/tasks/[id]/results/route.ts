@@ -1,5 +1,6 @@
 import { query } from '@/lib/db';
 import { requireSession } from '@/lib/require-session';
+import { internalError } from '@/lib/error-response';
 
 export async function GET(
   request: Request,
@@ -44,7 +45,6 @@ export async function GET(
 
     return Response.json({ results: rows });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return Response.json({ error: message }, { status: 500 });
+    return internalError(error);
   }
 }

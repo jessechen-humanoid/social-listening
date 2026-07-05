@@ -1,19 +1,33 @@
 @import "tailwindcss";
 
-:root {
-  --background: #fafaf8;
-  --foreground: #1a1a1a;
+/* Design tokens (design「Design tokens 與字型」): the palette's single source
+   of truth. Canvas drawing code cannot read CSS vars — it uses the mirrored
+   constants in src/lib/chart-colors.ts; keep the two lists in sync. */
+/* static: token references live in TSX inline styles (var(--color-*)),
+   which Tailwind's class scanner cannot see — without static the unused
+   ones would be tree-shaken out of :root. */
+@theme static {
+  --color-ink: #1a1a1a;
+  --color-muted: #6b6b6b;
+  --color-faint: #c0c0c0;
+  --color-line: #e8e8e5;
+  --color-line-soft: #f0f0ed;
+  --color-paper: #fafaf8;
+  --color-card: #ffffff;
+  --color-danger: #c75c5c;
+  --color-success: #7a9e7e;
+  --color-accent: #2d2d2d;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+:root {
+  --background: var(--color-paper);
+  --foreground: var(--color-ink);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  /* Geist is loaded by layout.tsx (next/font); before this wiring the body
+     silently fell back to Arial and the font download was wasted. */
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
 }

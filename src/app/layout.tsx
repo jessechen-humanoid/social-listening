@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import SessionWrapper from "@/components/SessionWrapper";
 import AppShell from "@/components/AppShell";
+import { UploadDraftProvider } from "@/lib/upload-draft-context";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -29,11 +30,13 @@ export default function RootLayout({
       lang="zh-TW"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col" style={{ backgroundColor: '#fafaf8' }}>
+      <body className="min-h-full flex flex-col" style={{ backgroundColor: 'var(--color-paper)' }}>
         <SessionWrapper>
-          <AppShell>
-            {children}
-          </AppShell>
+          <UploadDraftProvider>
+            <AppShell>
+              {children}
+            </AppShell>
+          </UploadDraftProvider>
         </SessionWrapper>
       </body>
     </html>

@@ -1,5 +1,6 @@
 import { listPromptVersions } from '@/lib/prompt-versions';
 import { requireSession } from '@/lib/require-session';
+import { internalError } from '@/lib/error-response';
 
 export async function GET(request: Request) {
   const { response: authResponse } = await requireSession();
@@ -21,7 +22,6 @@ export async function GET(request: Request) {
       })),
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return Response.json({ error: message }, { status: 500 });
+    return internalError(error);
   }
 }

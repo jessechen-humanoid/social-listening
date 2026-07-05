@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import type { WeeklyBucket } from '@/lib/deep-pipeline/aggregate';
+import { CHART_COLORS } from '@/lib/chart-colors';
 
 interface WeeklyTimelineProps {
   buckets: WeeklyBucket[];
@@ -65,8 +66,10 @@ export default function WeeklyTimeline({
     <canvas
       data-chart="timeline"
       ref={canvasRef}
+      role="img"
+      aria-label={title ?? '逐週聲量長條圖'}
       className="w-full rounded-xl"
-      style={{ height: 360, backgroundColor: '#ffffff', border: '1px solid #e8e8e5' }}
+      style={{ height: 360, backgroundColor: CHART_COLORS.card, border: '1px solid var(--color-line)' }}
     />
   );
 }
@@ -80,7 +83,7 @@ function drawTimeline(
   negativeColor: string,
   title: string | undefined
 ) {
-  ctx.fillStyle = '#ffffff';
+  ctx.fillStyle = CHART_COLORS.card;
   ctx.fillRect(0, 0, width, height);
 
   const margin = { top: 50, right: 40, bottom: 70, left: 60 };
@@ -88,14 +91,14 @@ function drawTimeline(
   const plotH = height - margin.top - margin.bottom;
 
   if (title) {
-    ctx.fillStyle = '#1a1a1a';
+    ctx.fillStyle = CHART_COLORS.ink;
     ctx.font = 'bold 14px Arial, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(title, width / 2, 24);
   }
 
   if (buckets.length === 0) {
-    ctx.fillStyle = '#6b6b6b';
+    ctx.fillStyle = CHART_COLORS.muted;
     ctx.font = '12px Arial, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('No data', width / 2, height / 2);
@@ -111,7 +114,7 @@ function drawTimeline(
   const barW = plotW / buckets.length;
 
   // Mid axis line
-  ctx.strokeStyle = '#c0c0c0';
+  ctx.strokeStyle = CHART_COLORS.faint;
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(margin.left, midY);
@@ -136,7 +139,7 @@ function drawTimeline(
   });
 
   // X-axis tick labels (rotated)
-  ctx.fillStyle = '#1a1a1a';
+  ctx.fillStyle = CHART_COLORS.ink;
   ctx.font = '10px Arial, sans-serif';
   ctx.textAlign = 'right';
   buckets.forEach((b, i) => {
@@ -149,7 +152,7 @@ function drawTimeline(
   });
 
   // Y-axis labels
-  ctx.fillStyle = '#1a1a1a';
+  ctx.fillStyle = CHART_COLORS.ink;
   ctx.font = '11px Arial, sans-serif';
   ctx.textAlign = 'right';
   ctx.fillText(maxAbs.toFixed(1), margin.left - 6, margin.top + 4);
@@ -162,11 +165,11 @@ function drawTimeline(
   const legendY = height - 18;
   ctx.fillStyle = positiveColor;
   ctx.fillRect(margin.left, legendY - 9, 12, 12);
-  ctx.fillStyle = '#1a1a1a';
+  ctx.fillStyle = CHART_COLORS.ink;
   ctx.fillText('正向（好感 > 5）', margin.left + 18, legendY);
   ctx.fillStyle = negativeColor;
   ctx.fillRect(margin.left + 130, legendY - 9, 12, 12);
-  ctx.fillStyle = '#1a1a1a';
+  ctx.fillStyle = CHART_COLORS.ink;
   ctx.fillText('負向（好感 < 5）', margin.left + 148, legendY);
 }
 

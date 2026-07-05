@@ -10,13 +10,13 @@ describe('requireSession', () => {
     authMock.mockReset();
   });
 
-  it('returns a 401 JSON response of shape { error: "Unauthorized" } without a session', async () => {
+  it('returns a 401 JSON response in the unified error shape without a session', async () => {
     authMock.mockResolvedValue(null);
     const { session, response } = await requireSession();
     expect(session).toBeNull();
     expect(response).not.toBeNull();
     expect(response!.status).toBe(401);
-    expect(await response!.json()).toEqual({ error: 'Unauthorized' });
+    expect(await response!.json()).toEqual({ error: { code: 'UNAUTHORIZED', message: 'Unauthorized' } });
   });
 
   it('returns a 401 when the session has no user', async () => {

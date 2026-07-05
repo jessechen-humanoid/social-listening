@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { parseFile } from '@/lib/parse-file';
 import type { UploadedFile } from '@/lib/types';
+import { ROLE_LABELS } from '@/lib/column-mapping';
 import type { FileRole } from '@/lib/column-mapping';
 import { SUPPORTED_PLATFORMS, type Platform } from '@/lib/platforms';
 import { compareHeaderSets, describeHeaderMismatch } from '@/lib/header-compare';
@@ -19,11 +20,6 @@ interface FileUploadProps {
   mode?: Mode;
 }
 
-const ROLE_LABELS: Record<FileRole, string> = {
-  hotpost: 'Hotpost（熱門貼文）',
-  hotcomment: 'Hotcomment（熱門留言）',
-  comments_from_posts: 'Comments-from-posts（貼文留言）',
-};
 
 function rolesForPlatform(platform: Platform): FileRole[] {
   if (platform === 'fb') {
@@ -91,29 +87,36 @@ export default function FileUpload({ files, onChange, mode = 'light' }: FileUplo
   // files look like a dead click. Keyed per slot in deep mode.
   const [parsingSlots, setParsingSlots] = useState<Set<string>>(new Set());
   const [parsingLight, setParsingLight] = useState(false);
+  // Inline upload errors (spec "Inline error feedback replaces alert
+  // dialogs"): collected per action, rendered as a banner, cleared on the
+  // next upload attempt.
+  const [uploadErrors, setUploadErrors] = useState<string[]>([]);
 
   const handleFiles = useCallback(async (fileList: FileList) => {
     const newFiles: UploadedFile[] = [];
+    const errors: string[] = [];
 
+    setUploadErrors([]);
     setParsingLight(true);
     try {
       for (const file of Array.from(fileList)) {
         const ext = file.name.split('.').pop()?.toLowerCase();
         if (!ext || !['csv', 'xlsx', 'xls'].includes(ext)) {
-          alert(`${file.name}：不支援的格式，請上傳 CSV 或 Excel (.xlsx) 檔案`);
+          errors.push(`${file.name}：不支援的格式，請上傳 CSV 或 Excel (.xlsx) 檔案`);
           continue;
         }
 
         try {
           newFiles.push(await buildUploadedFile(file));
         } catch (err) {
-          alert(err instanceof Error ? err.message : '檔案解析失敗');
+          errors.push(`${file.name}：${err instanceof Error ? err.message : '檔案解析失敗'}`);
         }
       }
     } finally {
       setParsingLight(false);
     }
 
+    setUploadErrors(errors);
     onChange([...files, ...newFiles]);
   }, [files, onChange]);
 
@@ -137,13 +140,15 @@ export default function FileUpload({ files, onChange, mode = 'light' }: FileUplo
   // multi-file drop would keep only the last file once parses overlap.
   const handleSlotUpload = useCallback(async (platform: Platform, role: FileRole, dropped: File[]) => {
     const slotId = `${platform}:${role}`;
+    setUploadErrors([]);
     setParsingSlots(prev => new Set(prev).add(slotId));
     const accepted: UploadedFile[] = [];
+    const errors: string[] = [];
     try {
       for (const file of dropped) {
         const ext = file.name.split('.').pop()?.toLowerCase();
         if (!ext || !['csv', 'xlsx', 'xls'].includes(ext)) {
-          alert(`${file.name}：不支援的格式，請上傳 CSV 或 Excel (.xlsx) 檔案`);
+          errors.push(`${file.name}：不支援的格式，請上傳 CSV 或 Excel (.xlsx) 檔案`);
           continue;
         }
         try {
@@ -155,15 +160,15 @@ export default function FileUpload({ files, onChange, mode = 'light' }: FileUplo
           if (reference) {
             const cmp = compareHeaderSets(reference.columns, uploaded.columns);
             if (!cmp.same) {
-              alert(
-                `${file.name} 的欄位與 ${reference.filename} 不一致，無法放入同一槽位。\n${describeHeaderMismatch(cmp)}`
+              errors.push(
+                `${file.name} 的欄位與 ${reference.filename} 不一致，無法放入同一槽位。${describeHeaderMismatch(cmp)}`
               );
               continue;
             }
           }
           accepted.push(uploaded);
         } catch (err) {
-          alert(err instanceof Error ? err.message : '檔案解析失敗');
+          errors.push(`${file.name}：${err instanceof Error ? err.message : '檔案解析失敗'}`);
         }
       }
     } finally {
@@ -173,6 +178,7 @@ export default function FileUpload({ files, onChange, mode = 'light' }: FileUplo
         return next;
       });
     }
+    setUploadErrors(errors);
     if (accepted.length > 0) onChange([...files, ...accepted]);
   }, [files, onChange]);
 
@@ -185,26 +191,31 @@ export default function FileUpload({ files, onChange, mode = 'light' }: FileUplo
       const reparsed = await buildUploadedFile(existing.file, existing.role, existing.platform, sheetName);
       onChange(files.map(f => (f.id === id ? { ...reparsed, id, platform: existing.platform } : f)));
     } catch (err) {
-      alert(err instanceof Error ? err.message : '工作表切換失敗');
+      setUploadErrors([err instanceof Error ? err.message : '工作表切換失敗']);
     }
   }, [files, onChange]);
 
   if (mode === 'deep') {
     return (
       <div className="space-y-6">
-        <label className="text-sm font-medium" style={{ color: '#6b6b6b' }}>
+        <p className="text-sm font-medium" style={{ color: 'var(--color-muted)' }}>
           資料檔案（各平台皆可留空；有檔案的平台會各自建立一個分析任務）
-        </label>
+        </p>
+      {uploadErrors.length > 0 && (
+        <div className="rounded-lg p-3 text-xs space-y-1" style={{ backgroundColor: '#fef0f0', color: 'var(--color-danger)' }}>
+          {uploadErrors.map((msg, i) => <p key={i}>{msg}</p>)}
+        </div>
+      )}
         {SUPPORTED_PLATFORMS.map(platform => {
           const sectionFiles = files.filter(f => f.platform === platform);
           return (
             <div key={platform} className="space-y-3">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-medium" style={{ color: '#1a1a1a' }}>
+                <span className="text-sm font-medium" style={{ color: 'var(--color-ink)' }}>
                   {PLATFORM_LABELS[platform]}
                 </span>
                 {sectionFiles.length > 0 && (
-                  <span className="text-xs" style={{ color: '#7a9e7e' }}>
+                  <span className="text-xs" style={{ color: 'var(--color-success)' }}>
                     {sectionFiles.length} 個檔案
                   </span>
                 )}
@@ -230,20 +241,31 @@ export default function FileUpload({ files, onChange, mode = 'light' }: FileUplo
 
   return (
     <div className="space-y-4">
-      <label className="text-sm font-medium" style={{ color: '#6b6b6b' }}>資料檔案</label>
+      <p className="text-sm font-medium" style={{ color: 'var(--color-muted)' }}>資料檔案</p>
+      {uploadErrors.length > 0 && (
+        <div className="rounded-lg p-3 text-xs space-y-1" style={{ backgroundColor: '#fef0f0', color: 'var(--color-danger)' }}>
+          {uploadErrors.map((msg, i) => <p key={i}>{msg}</p>)}
+        </div>
+      )}
 
       {/* Drop zone */}
       <div
+        role="button"
+        tabIndex={0}
+        aria-label="上傳資料檔案"
         className="rounded-xl p-8 text-center cursor-pointer transition"
-        style={{ border: '2px dashed #e8e8e5', backgroundColor: '#ffffff' }}
+        style={{ border: '2px dashed var(--color-line)', backgroundColor: 'var(--color-card)' }}
         onDragOver={e => e.preventDefault()}
         onDrop={handleDrop}
         onClick={() => inputRef.current?.click()}
+        onKeyDown={e => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inputRef.current?.click(); }
+        }}
       >
-        <p className="text-sm" style={{ color: '#6b6b6b' }}>
+        <p className="text-sm" style={{ color: 'var(--color-muted)' }}>
           {parsingLight ? '解析中…' : '拖放檔案至此，或點擊上傳'}
         </p>
-        <p className="text-xs mt-1" style={{ color: '#c0c0c0' }}>
+        <p className="text-xs mt-1" style={{ color: 'var(--color-faint)' }}>
           支援 CSV、Excel (.xlsx)
         </p>
         <input
@@ -264,17 +286,17 @@ export default function FileUpload({ files, onChange, mode = 'light' }: FileUplo
         <div
           key={f.id}
           className="rounded-xl p-5"
-          style={{ backgroundColor: '#ffffff', border: '1px solid #e8e8e5' }}
+          style={{ backgroundColor: 'var(--color-card)', border: '1px solid var(--color-line)' }}
         >
           <div className="flex items-center justify-between mb-3">
             <div>
-              <span className="text-sm font-medium" style={{ color: '#1a1a1a' }}>{f.filename}</span>
-              <span className="text-xs ml-2" style={{ color: '#6b6b6b' }}>{f.rowCount} 列</span>
+              <span className="text-sm font-medium" style={{ color: 'var(--color-ink)' }}>{f.filename}</span>
+              <span className="text-xs ml-2" style={{ color: 'var(--color-muted)' }}>{f.rowCount} 列</span>
             </div>
             <button
               onClick={() => handleRemove(f.id)}
               className="text-sm px-2 py-1 rounded-lg transition"
-              style={{ color: '#c75c5c' }}
+              style={{ color: 'var(--color-danger)' }}
             >
               移除
             </button>
@@ -283,14 +305,14 @@ export default function FileUpload({ files, onChange, mode = 'light' }: FileUplo
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {/* Content column - required */}
             <div>
-              <label className="text-xs font-medium mb-1 block" style={{ color: '#6b6b6b' }}>
-                分析內容欄位 <span style={{ color: '#c75c5c' }}>*</span>
+              <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--color-muted)' }}>
+                分析內容欄位 <span style={{ color: 'var(--color-danger)' }}>*</span>
               </label>
               <select
                 value={f.contentColumn}
                 onChange={e => handleColumnChange(f.id, 'contentColumn', e.target.value)}
-                className="w-full rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#2d2d2d] focus:outline-none"
-                style={{ border: '1px solid #e8e8e5', backgroundColor: '#ffffff', color: '#1a1a1a' }}
+                className="w-full rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-accent focus:outline-none"
+                style={{ border: '1px solid var(--color-line)', backgroundColor: 'var(--color-card)', color: 'var(--color-ink)' }}
               >
                 <option value="">選擇欄位...</option>
                 {f.columns.map(col => (
@@ -301,14 +323,14 @@ export default function FileUpload({ files, onChange, mode = 'light' }: FileUplo
 
             {/* Engagement column - optional */}
             <div>
-              <label className="text-xs font-medium mb-1 block" style={{ color: '#6b6b6b' }}>
+              <label className="text-xs font-medium mb-1 block" style={{ color: 'var(--color-muted)' }}>
                 互動量欄位（選填）
               </label>
               <select
                 value={f.engagementColumn}
                 onChange={e => handleColumnChange(f.id, 'engagementColumn', e.target.value)}
-                className="w-full rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#2d2d2d] focus:outline-none"
-                style={{ border: '1px solid #e8e8e5', backgroundColor: '#ffffff', color: '#1a1a1a' }}
+                className="w-full rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-accent focus:outline-none"
+                style={{ border: '1px solid var(--color-line)', backgroundColor: 'var(--color-card)', color: 'var(--color-ink)' }}
               >
                 <option value="">不選擇</option>
                 {f.columns.map(col => (
@@ -345,13 +367,13 @@ function RoleSlot({ platform, role, files, parsing, onUpload, onRemove, onSheetC
   return (
     <div
       className="rounded-xl p-5"
-      style={{ backgroundColor: '#ffffff', border: '1px solid #e8e8e5' }}
+      style={{ backgroundColor: 'var(--color-card)', border: '1px solid var(--color-line)' }}
     >
       <div className="flex items-center justify-between mb-3">
-        <span className="text-sm font-medium" style={{ color: '#1a1a1a' }}>
+        <span className="text-sm font-medium" style={{ color: 'var(--color-ink)' }}>
           {ROLE_LABELS[role]}
           {files.length > 1 && (
-            <span className="text-xs ml-2" style={{ color: '#6b6b6b' }}>
+            <span className="text-xs ml-2" style={{ color: 'var(--color-muted)' }}>
               {files.length} 個檔案（將合併分析）
             </span>
           )}
@@ -362,19 +384,20 @@ function RoleSlot({ platform, role, files, parsing, onUpload, onRemove, onSheetC
         <div
           key={file.id}
           className="flex items-center justify-between rounded-lg px-3 py-2 mb-2"
-          style={{ backgroundColor: '#fafaf8', border: '1px solid #f0f0ed' }}
+          style={{ backgroundColor: 'var(--color-paper)', border: '1px solid var(--color-line-soft)' }}
         >
-          <div className="text-xs space-y-1" style={{ color: '#6b6b6b' }}>
-            <div style={{ color: '#1a1a1a' }}>{file.filename}</div>
+          <div className="text-xs space-y-1" style={{ color: 'var(--color-muted)' }}>
+            <div style={{ color: 'var(--color-ink)' }}>{file.filename}</div>
             <div>{file.rowCount} 列 · {file.columns.length} 個欄位</div>
             {(file.sheetNames?.length ?? 0) > 1 && (
               <div className="flex items-center gap-2">
-                <label className="text-xs" style={{ color: '#6b6b6b' }}>工作表</label>
+                <label htmlFor={`sheet-${file.id}`} className="text-xs" style={{ color: 'var(--color-muted)' }}>工作表</label>
                 <select
+                  id={`sheet-${file.id}`}
                   value={file.selectedSheet ?? ''}
                   onChange={e => onSheetChange(file.id, e.target.value)}
-                  className="rounded-lg px-2 py-1 text-xs focus:ring-2 focus:ring-[#2d2d2d] focus:outline-none"
-                  style={{ border: '1px solid #e8e8e5', backgroundColor: '#ffffff', color: '#1a1a1a' }}
+                  className="rounded-lg px-2 py-1 text-xs focus:ring-2 focus:ring-accent focus:outline-none"
+                  style={{ border: '1px solid var(--color-line)', backgroundColor: 'var(--color-card)', color: 'var(--color-ink)' }}
                 >
                   {file.sheetNames!.map(name => (
                     <option key={name} value={name}>{name}</option>
@@ -386,7 +409,7 @@ function RoleSlot({ platform, role, files, parsing, onUpload, onRemove, onSheetC
           <button
             onClick={() => onRemove(file.id)}
             className="text-sm px-2 py-1 rounded-lg transition"
-            style={{ color: '#c75c5c' }}
+            style={{ color: 'var(--color-danger)' }}
           >
             移除
           </button>
@@ -394,22 +417,29 @@ function RoleSlot({ platform, role, files, parsing, onUpload, onRemove, onSheetC
       ))}
 
       <div
+        role="button"
+        tabIndex={0}
+        aria-label={`上傳 ${ROLE_LABELS[role]} 檔案`}
+        aria-disabled={parsing}
         className="rounded-lg p-4 text-center transition"
         style={{
-          border: '2px dashed #e8e8e5',
+          border: '2px dashed var(--color-line)',
           cursor: parsing ? 'wait' : 'pointer',
           opacity: parsing ? 0.6 : 1,
         }}
         onDragOver={e => e.preventDefault()}
         onDrop={parsing ? e => e.preventDefault() : handleDrop}
         onClick={() => { if (!parsing) inputRef.current?.click(); }}
+        onKeyDown={e => {
+          if (!parsing && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); inputRef.current?.click(); }
+        }}
       >
-        <p className="text-sm" style={{ color: '#6b6b6b' }}>
+        <p className="text-sm" style={{ color: 'var(--color-muted)' }}>
           {parsing
             ? '解析中…'
             : files.length === 0 ? '拖放檔案至此，或點擊上傳' : '加入更多分割檔（欄位須相同）'}
         </p>
-        <p className="text-xs mt-1" style={{ color: '#c0c0c0' }}>
+        <p className="text-xs mt-1" style={{ color: 'var(--color-faint)' }}>
           支援 CSV、Excel (.xlsx)，可多檔
         </p>
         <input

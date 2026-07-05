@@ -4,18 +4,18 @@ import { signIn } from "next-auth/react";
 
 export default function SignInPage() {
   return (
-    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: "#fafaf8" }}>
-      <div className="w-full max-w-sm rounded-xl p-8" style={{ backgroundColor: "#ffffff", border: "1px solid #e8e8e5" }}>
-        <h1 className="text-xl font-bold mb-1 text-center" style={{ color: "#1a1a1a" }}>
+    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: 'var(--color-paper)' }}>
+      <div className="w-full max-w-sm rounded-xl p-8" style={{ backgroundColor: 'var(--color-card)', border: "1px solid var(--color-line)" }}>
+        <h1 className="text-xl font-bold mb-1 text-center" style={{ color: 'var(--color-ink)' }}>
           只要輿情
         </h1>
-        <p className="text-sm text-center mb-6" style={{ color: "#6b6b6b" }}>
+        <p className="text-sm text-center mb-6" style={{ color: 'var(--color-muted)' }}>
           請使用 Google 帳號登入
         </p>
         <button
           onClick={() => signIn("google", { callbackUrl: "/" })}
           className="w-full py-2 rounded-lg text-sm font-medium transition flex items-center justify-center gap-2"
-          style={{ backgroundColor: "#1a1a1a", color: "#ffffff" }}
+          style={{ backgroundColor: 'var(--color-ink)', color: 'var(--color-card)' }}
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
             <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>

@@ -45,27 +45,27 @@ export default function AnalysisConfigPanel({ config, onChange, totalRows }: Ana
     <div className="space-y-5">
       {/* Project name */}
       <div>
-        <label className="text-sm font-medium block mb-2" style={{ color: '#6b6b6b' }}>專案名稱（選填）</label>
-        <input
+        <label htmlFor="light-1" className="text-sm font-medium block mb-2" style={{ color: 'var(--color-muted)' }}>專案名稱（選填）</label>
+        <input id="light-1"
           type="text"
           value={config.projectName}
           onChange={e => setField('projectName', e.target.value)}
           placeholder="例如：McDonald's Q1 2026"
-          className="w-full rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#2d2d2d] focus:outline-none"
-          style={{ border: '1px solid #e8e8e5', backgroundColor: '#ffffff', color: '#1a1a1a' }}
+          className="w-full rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-accent focus:outline-none"
+          style={{ border: '1px solid var(--color-line)', backgroundColor: 'var(--color-card)', color: 'var(--color-ink)' }}
         />
       </div>
 
       {/* Mode toggle */}
       <div>
-        <label className="text-sm font-medium block mb-2" style={{ color: '#6b6b6b' }}>分析模式</label>
+        <p className="text-sm font-medium block mb-2" style={{ color: 'var(--color-muted)' }}>分析模式</p>
         <div className="flex gap-2">
           <button
             onClick={() => switchMode('brand')}
             className="px-4 py-2 rounded-lg text-sm font-medium transition"
             style={isBrand
-              ? { backgroundColor: '#1a1a1a', color: '#ffffff' }
-              : { backgroundColor: '#f5f5f3', color: '#1a1a1a' }
+              ? { backgroundColor: 'var(--color-ink)', color: 'var(--color-card)' }
+              : { backgroundColor: '#f5f5f3', color: 'var(--color-ink)' }
             }
           >
             品牌好感
@@ -74,8 +74,8 @@ export default function AnalysisConfigPanel({ config, onChange, totalRows }: Ana
             onClick={() => switchMode('custom')}
             className="px-4 py-2 rounded-lg text-sm font-medium transition"
             style={!isBrand
-              ? { backgroundColor: '#1a1a1a', color: '#ffffff' }
-              : { backgroundColor: '#f5f5f3', color: '#1a1a1a' }
+              ? { backgroundColor: 'var(--color-ink)', color: 'var(--color-card)' }
+              : { backgroundColor: '#f5f5f3', color: 'var(--color-ink)' }
             }
           >
             自訂模式
@@ -84,26 +84,27 @@ export default function AnalysisConfigPanel({ config, onChange, totalRows }: Ana
       </div>
 
       {/* Condition indicator */}
-      <div className="rounded-xl p-5" style={{ backgroundColor: '#ffffff', border: '1px solid #e8e8e5' }}>
-        <label className="text-sm font-medium block mb-1" style={{ color: '#1a1a1a' }}>條件指標（選填）</label>
-        <p className="text-xs mb-3" style={{ color: '#6b6b6b' }}>
+      <div className="rounded-xl p-5" style={{ backgroundColor: 'var(--color-card)', border: '1px solid var(--color-line)' }}>
+        <label htmlFor="light-condition" className="text-sm font-medium block mb-1" style={{ color: 'var(--color-ink)' }}>條件指標（選填）</label>
+        <p className="text-xs mb-3" style={{ color: 'var(--color-muted)' }}>
           AI 會針對每則內容判斷是否符合此條件，例如「內容是否與早餐趨勢有關」
         </p>
         <input
+          id="light-condition"
           type="text"
           value={config.conditionText}
           onChange={e => setField('conditionText', e.target.value)}
           placeholder="輸入條件描述..."
-          className="w-full rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#2d2d2d] focus:outline-none"
-          style={{ border: '1px solid #e8e8e5', backgroundColor: '#ffffff', color: '#1a1a1a' }}
+          className="w-full rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-accent focus:outline-none"
+          style={{ border: '1px solid var(--color-line)', backgroundColor: 'var(--color-card)', color: 'var(--color-ink)' }}
         />
         {config.conditionText && (
-          <label className="flex items-center gap-2 mt-3 text-sm cursor-pointer" style={{ color: '#1a1a1a' }}>
+          <label className="flex items-center gap-2 mt-3 text-sm cursor-pointer" style={{ color: 'var(--color-ink)' }}>
             <input
               type="checkbox"
               checked={config.conditionFilterEnabled}
               onChange={e => setField('conditionFilterEnabled', e.target.checked)}
-              className="w-4 h-4 accent-[#2d2d2d]"
+              className="w-4 h-4 accent-accent"
             />
             啟用篩選（僅分析符合條件的內容）
           </label>
@@ -128,7 +129,7 @@ export default function AnalysisConfigPanel({ config, onChange, totalRows }: Ana
 
       {/* Dot color selector */}
       <div>
-        <label className="text-sm font-medium block mb-2" style={{ color: '#6b6b6b' }}>散佈圖顏色</label>
+        <p className="text-sm font-medium block mb-2" style={{ color: 'var(--color-muted)' }}>散佈圖顏色</p>
         <div className="flex gap-3 flex-wrap">
           {DOT_COLORS.map(c => (
             <button
@@ -138,8 +139,8 @@ export default function AnalysisConfigPanel({ config, onChange, totalRows }: Ana
               title={c.label}
               style={{
                 backgroundColor: c.value,
-                border: config.dotColor === c.value ? '3px solid #1a1a1a' : '3px solid transparent',
-                outline: config.dotColor === c.value ? '2px solid #e8e8e5' : 'none',
+                border: config.dotColor === c.value ? '3px solid var(--color-ink)' : '3px solid transparent',
+                outline: config.dotColor === c.value ? '2px solid var(--color-line)' : 'none',
               }}
             />
           ))}
@@ -148,12 +149,12 @@ export default function AnalysisConfigPanel({ config, onChange, totalRows }: Ana
 
       {/* Model selection */}
       <div>
-        <label className="text-sm font-medium block mb-2" style={{ color: '#6b6b6b' }}>AI 模型</label>
-        <select
+        <label htmlFor="light-2" className="text-sm font-medium block mb-2" style={{ color: 'var(--color-muted)' }}>AI 模型</label>
+        <select id="light-2"
           value={config.model}
           onChange={e => setField('model', e.target.value)}
-          className="w-full rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#2d2d2d] focus:outline-none"
-          style={{ border: '1px solid #e8e8e5', backgroundColor: '#ffffff', color: '#1a1a1a' }}
+          className="w-full rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-accent focus:outline-none"
+          style={{ border: '1px solid var(--color-line)', backgroundColor: 'var(--color-card)', color: 'var(--color-ink)' }}
         >
           {MODELS.map(m => (
             <option key={m.value} value={m.value}>{m.label}</option>
@@ -164,7 +165,7 @@ export default function AnalysisConfigPanel({ config, onChange, totalRows }: Ana
       {/* Row count slider — positioned just before "start analysis" button */}
       {totalRows > 0 && (
         <div>
-          <label className="text-sm font-medium block mb-2" style={{ color: '#6b6b6b' }}>
+          <label className="text-sm font-medium block mb-2" style={{ color: 'var(--color-muted)' }}>
             分析筆數：{effectiveMaxRows} / {totalRows}
           </label>
           <input
@@ -193,44 +194,44 @@ function AxisConfigSection({
   onChange: (axis: { name: string; zeroDescription: string; tenDescription: string }) => void;
 }) {
   return (
-    <div className="rounded-xl p-5" style={{ backgroundColor: '#ffffff', border: '1px solid #e8e8e5' }}>
-      <label className="text-sm font-medium block mb-3" style={{ color: '#1a1a1a' }}>
+    <div className="rounded-xl p-5" style={{ backgroundColor: 'var(--color-card)', border: '1px solid var(--color-line)' }}>
+      <p className="text-sm font-medium block mb-3" style={{ color: 'var(--color-ink)' }}>
         {label}
-        {locked && <span className="text-xs ml-2" style={{ color: '#6b6b6b' }}>（預設模式已鎖定）</span>}
-      </label>
+        {locked && <span className="text-xs ml-2" style={{ color: 'var(--color-muted)' }}>（預設模式已鎖定）</span>}
+      </p>
       <div className="space-y-3">
         <div>
-          <label className="text-xs font-medium block mb-1" style={{ color: '#6b6b6b' }}>名稱</label>
-          <input
+          <label htmlFor={`${label}-name`} className="text-xs font-medium block mb-1" style={{ color: 'var(--color-muted)' }}>名稱</label>
+          <input id={`${label}-name`}
             type="text"
             value={axis.name}
             onChange={e => onChange({ ...axis, name: e.target.value })}
             disabled={locked}
-            className="w-full rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#2d2d2d] focus:outline-none disabled:opacity-60"
-            style={{ border: '1px solid #e8e8e5', backgroundColor: locked ? '#f5f5f3' : '#ffffff', color: '#1a1a1a' }}
+            className="w-full rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-accent focus:outline-none disabled:opacity-60"
+            style={{ border: '1px solid var(--color-line)', backgroundColor: locked ? '#f5f5f3' : 'var(--color-card)', color: 'var(--color-ink)' }}
           />
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <label className="text-xs font-medium block mb-1" style={{ color: '#6b6b6b' }}>0 分代表</label>
-            <input
+            <label htmlFor={`${label}-zero`} className="text-xs font-medium block mb-1" style={{ color: 'var(--color-muted)' }}>0 分代表</label>
+            <input id={`${label}-zero`}
               type="text"
               value={axis.zeroDescription}
               onChange={e => onChange({ ...axis, zeroDescription: e.target.value })}
               disabled={locked}
-              className="w-full rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#2d2d2d] focus:outline-none disabled:opacity-60"
-              style={{ border: '1px solid #e8e8e5', backgroundColor: locked ? '#f5f5f3' : '#ffffff', color: '#1a1a1a' }}
+              className="w-full rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-accent focus:outline-none disabled:opacity-60"
+              style={{ border: '1px solid var(--color-line)', backgroundColor: locked ? '#f5f5f3' : 'var(--color-card)', color: 'var(--color-ink)' }}
             />
           </div>
           <div>
-            <label className="text-xs font-medium block mb-1" style={{ color: '#6b6b6b' }}>10 分代表</label>
-            <input
+            <label htmlFor={`${label}-ten`} className="text-xs font-medium block mb-1" style={{ color: 'var(--color-muted)' }}>10 分代表</label>
+            <input id={`${label}-ten`}
               type="text"
               value={axis.tenDescription}
               onChange={e => onChange({ ...axis, tenDescription: e.target.value })}
               disabled={locked}
-              className="w-full rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#2d2d2d] focus:outline-none disabled:opacity-60"
-              style={{ border: '1px solid #e8e8e5', backgroundColor: locked ? '#f5f5f3' : '#ffffff', color: '#1a1a1a' }}
+              className="w-full rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-accent focus:outline-none disabled:opacity-60"
+              style={{ border: '1px solid var(--color-line)', backgroundColor: locked ? '#f5f5f3' : 'var(--color-card)', color: 'var(--color-ink)' }}
             />
           </div>
         </div>

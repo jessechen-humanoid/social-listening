@@ -1,6 +1,11 @@
 import { v4 as uuidv4 } from 'uuid';
 import { batchUpdate, query, withTransaction } from './db';
 
+// Calibration acceptance gates (業務決策，出處：OPTIMIZATION-PLAN 附錄 D)：
+// ρ < 0.7 直接擋下換 model；0.7–0.85 警示需人工確認；≥ 0.85 視為排序一致。
+export const CALIBRATION_GATE_BLOCK = 0.7;
+export const CALIBRATION_GATE_WARN = 0.85;
+
 // ---------------------------------------------------------------------------
 // Quantile mapping
 // ---------------------------------------------------------------------------
@@ -336,15 +341,15 @@ export function evaluateRankCorrelationGate(
     };
   }
   const minRho = Math.min(rhoEmotion, rhoFavor);
-  if (minRho < 0.7) {
+  if (minRho < CALIBRATION_GATE_BLOCK) {
     return {
       outcome: 'block',
       rho_emotion: rhoEmotion,
       rho_favor: rhoFavor,
-      message: `Rank disagreement too high (min ρ = ${minRho.toFixed(3)} < 0.7). Switch blocked.`,
+      message: `Rank disagreement too high (min ρ = ${minRho.toFixed(3)} < ${CALIBRATION_GATE_BLOCK}). Switch blocked.`,
     };
   }
-  if (minRho < 0.85) {
+  if (minRho < CALIBRATION_GATE_WARN) {
     return {
       outcome: 'warn',
       rho_emotion: rhoEmotion,

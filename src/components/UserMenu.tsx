@@ -19,13 +19,13 @@ export default function UserMenu() {
           referrerPolicy="no-referrer"
         />
       )}
-      <span className="text-sm" style={{ color: "#6b6b6b" }}>
+      <span className="text-sm" style={{ color: 'var(--color-muted)' }}>
         {session.user.name || session.user.email}
       </span>
       <button
         onClick={() => signOut({ callbackUrl: "/auth/signin" })}
         className="text-xs px-3 py-1 rounded-md transition"
-        style={{ border: "1px solid #e8e8e5", color: "#6b6b6b" }}
+        style={{ border: "1px solid var(--color-line)", color: 'var(--color-muted)' }}
       >
         登出
       </button>

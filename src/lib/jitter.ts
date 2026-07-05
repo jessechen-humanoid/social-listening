@@ -20,8 +20,9 @@ function gaussianRandom(rng: () => number): number {
   return Math.sqrt(-2 * Math.log(u1 || 0.0001)) * Math.cos(2 * Math.PI * u2);
 }
 
-const SIGMA = 0.12;
-const CLAMP = 0.4;
+// Spec "Gaussian jitter on data points": σ = 0.12, hard clamp ±0.4.
+export const JITTER_SIGMA = 0.12;
+export const JITTER_CLAMP = 0.4;
 
 export function applyJitter(
   x: number,
@@ -30,15 +31,17 @@ export function applyJitter(
 ): { jx: number; jy: number } {
   const rng = mulberry32(rowIndex * 73856093 + 19349663);
 
-  let dx = gaussianRandom(rng) * SIGMA;
-  let dy = gaussianRandom(rng) * SIGMA;
+  let dx = gaussianRandom(rng) * JITTER_SIGMA;
+  let dy = gaussianRandom(rng) * JITTER_SIGMA;
 
   // Hard clamp
-  dx = Math.max(-CLAMP, Math.min(CLAMP, dx));
-  dy = Math.max(-CLAMP, Math.min(CLAMP, dy));
+  dx = Math.max(-JITTER_CLAMP, Math.min(JITTER_CLAMP, dx));
+  dy = Math.max(-JITTER_CLAMP, Math.min(JITTER_CLAMP, dy));
 
+  // Clamp back into the score domain (spec "Gaussian jitter on data points"):
+  // a 10.0 score must not paint outside the chart at 10.4.
   return {
-    jx: x + dx,
-    jy: y + dy,
+    jx: Math.max(0, Math.min(10, x + dx)),
+    jy: Math.max(0, Math.min(10, y + dy)),
   };
 }

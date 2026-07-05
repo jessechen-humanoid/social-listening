@@ -30,9 +30,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   // Authenticated — render with header
   return (
     <>
-      <header className="border-b sticky top-0 z-10" style={{ backgroundColor: '#ffffff', borderColor: '#e8e8e5' }}>
+      <header className="border-b sticky top-0 z-10" style={{ backgroundColor: 'var(--color-card)', borderColor: 'var(--color-line)' }}>
         <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
-          <span className="text-xl font-bold tracking-tight" style={{ color: '#1a1a1a' }}>
+          <span className="text-xl font-bold tracking-tight" style={{ color: 'var(--color-ink)' }}>
             只要輿情
           </span>
           <UserMenu />

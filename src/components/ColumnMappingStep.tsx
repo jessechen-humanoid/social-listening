@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import type { UploadedFile } from '@/lib/types';
 import type { Platform } from '@/lib/platforms';
 import {
+  ROLE_LABELS,
   guessColumnMapping,
   validateMapping,
   rolePlatformNeedsForumFilter,
@@ -25,11 +26,6 @@ const FIELD_LABELS: Record<LogicalField, string> = {
   author_name: '作者名稱',
 };
 
-const ROLE_LABELS: Record<FileRole, string> = {
-  hotpost: 'Hotpost（熱門貼文）',
-  hotcomment: 'Hotcomment（熱門留言）',
-  comments_from_posts: 'Comments-from-posts（貼文留言）',
-};
 
 // One mapping per slot (platform × role); it applies to every file the slot
 // holds — headers are enforced identical at upload time.
@@ -234,10 +230,10 @@ export default function ColumnMappingStep({
   return (
     <div className="space-y-6">
       <div>
-        <h3 className="text-base font-medium" style={{ color: '#1a1a1a' }}>
+        <h3 className="text-base font-medium" style={{ color: 'var(--color-ink)' }}>
           欄位對應
         </h3>
-        <p className="text-xs mt-1" style={{ color: '#6b6b6b' }}>
+        <p className="text-xs mt-1" style={{ color: 'var(--color-muted)' }}>
           確認每個檔案的必要欄位對應；系統已依 Qsearch 慣例預填猜測值。
         </p>
       </div>
@@ -261,13 +257,13 @@ export default function ColumnMappingStep({
           <div
             key={key}
             className="rounded-xl p-5 space-y-4"
-            style={{ backgroundColor: '#ffffff', border: '1px solid #e8e8e5' }}
+            style={{ backgroundColor: 'var(--color-card)', border: '1px solid var(--color-line)' }}
           >
             <div>
-              <span className="text-sm font-medium" style={{ color: '#1a1a1a' }}>
+              <span className="text-sm font-medium" style={{ color: 'var(--color-ink)' }}>
                 {PLATFORM_LABELS[m.platform]}・{ROLE_LABELS[m.role]}
               </span>
-              <span className="text-xs ml-2" style={{ color: '#6b6b6b' }}>
+              <span className="text-xs ml-2" style={{ color: 'var(--color-muted)' }}>
                 {slot.files.length === 1
                   ? `${firstFile.filename} · ${slotRowCount} 列`
                   : `${slot.files.length} 個檔案合併 · 共 ${slotRowCount} 列`}
@@ -277,18 +273,19 @@ export default function ColumnMappingStep({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {fields.map(({ field, required }) => (
                 <div key={field}>
-                  <label className="text-xs font-medium mb-1 block" style={{ color: '#6b6b6b' }}>
+                  <label htmlFor={`${key}-${field}`} className="text-xs font-medium mb-1 block" style={{ color: 'var(--color-muted)' }}>
                     {FIELD_LABELS[field]}
-                    {required && <span style={{ color: '#c75c5c' }}> *</span>}
+                    {required && <span style={{ color: 'var(--color-danger)' }}> *</span>}
                   </label>
                   <select
+                    id={`${key}-${field}`}
                     value={m.mapping[field] ?? ''}
                     onChange={(e) => updateMapping(m.platform, m.role, field, e.target.value)}
-                    className="w-full rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-[#2d2d2d] focus:outline-none"
+                    className="w-full rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-accent focus:outline-none"
                     style={{
-                      border: '1px solid #e8e8e5',
-                      backgroundColor: '#ffffff',
-                      color: '#1a1a1a',
+                      border: '1px solid var(--color-line)',
+                      backgroundColor: 'var(--color-card)',
+                      color: 'var(--color-ink)',
                     }}
                   >
                     <option value="">{required ? '選擇欄位...' : '不選擇'}</option>
@@ -303,7 +300,7 @@ export default function ColumnMappingStep({
             </div>
 
             {validation && !validation.ok && (
-              <div className="text-xs" style={{ color: '#c75c5c' }}>
+              <div className="text-xs" style={{ color: 'var(--color-danger)' }}>
                 缺少必要欄位：{validation.missing.map((f) => FIELD_LABELS[f]).join('、')}
               </div>
             )}
@@ -317,13 +314,13 @@ export default function ColumnMappingStep({
       {dcardFile && allForums.length > 0 && (
         <div
           className="rounded-xl p-5 space-y-3"
-          style={{ backgroundColor: '#ffffff', border: '1px solid #e8e8e5' }}
+          style={{ backgroundColor: 'var(--color-card)', border: '1px solid var(--color-line)' }}
         >
           <div>
-            <span className="text-sm font-medium" style={{ color: '#1a1a1a' }}>
+            <span className="text-sm font-medium" style={{ color: 'var(--color-ink)' }}>
               論壇過濾
             </span>
-            <p className="text-xs mt-1" style={{ color: '#6b6b6b' }}>
+            <p className="text-xs mt-1" style={{ color: 'var(--color-muted)' }}>
               預設只勾選 Dcard；其他論壇（PTT、Bahamut 等）需要時再勾選。
             </p>
           </div>
@@ -342,7 +339,7 @@ export default function ColumnMappingStep({
                     });
                   }}
                 />
-                <span style={{ color: '#1a1a1a' }}>{forum}</span>
+                <span style={{ color: 'var(--color-ink)' }}>{forum}</span>
               </label>
             ))}
           </div>
@@ -354,7 +351,7 @@ export default function ColumnMappingStep({
           <button
             onClick={onBack}
             className="text-sm px-4 py-2 rounded-lg transition"
-            style={{ color: '#6b6b6b' }}
+            style={{ color: 'var(--color-muted)' }}
           >
             返回
           </button>
@@ -366,8 +363,8 @@ export default function ColumnMappingStep({
           disabled={blocked || confirming}
           className="text-sm px-4 py-2 rounded-lg transition"
           style={{
-            backgroundColor: blocked ? '#e8e8e5' : '#2d2d2d',
-            color: blocked ? '#c0c0c0' : '#ffffff',
+            backgroundColor: blocked ? 'var(--color-line)' : 'var(--color-accent)',
+            color: blocked ? 'var(--color-faint)' : 'var(--color-card)',
             cursor: blocked ? 'not-allowed' : 'pointer',
           }}
         >
@@ -433,18 +430,18 @@ function PreviewBlock({
       </div>
       {logicalCols.length > 0 && preview.sampleRows.length > 0 && (
         <div>
-          <div className="font-medium mb-1" style={{ color: '#6b6b6b' }}>
+          <div className="font-medium mb-1" style={{ color: 'var(--color-muted)' }}>
             前 {preview.sampleRows.length} 列預覽
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-xs" style={{ color: '#1a1a1a' }}>
+            <table className="w-full text-xs" style={{ color: 'var(--color-ink)' }}>
               <thead>
                 <tr>
                   {logicalCols.map((f) => (
                     <th
                       key={f}
                       className="text-left px-2 py-1"
-                      style={{ borderBottom: '1px solid #e8e8e5', color: '#6b6b6b' }}
+                      style={{ borderBottom: '1px solid var(--color-line)', color: 'var(--color-muted)' }}
                     >
                       {FIELD_LABELS[f]}
                     </th>
@@ -477,7 +474,7 @@ function PreviewBlock({
         </div>
       )}
       {file.columns.length === 0 && (
-        <div style={{ color: '#c75c5c' }}>檔案中找不到任何欄位</div>
+        <div style={{ color: 'var(--color-danger)' }}>檔案中找不到任何欄位</div>
       )}
     </div>
   );
@@ -494,8 +491,8 @@ function Stat({
 }) {
   return (
     <div>
-      <div style={{ color: '#6b6b6b' }}>{label}</div>
-      <div style={{ color: warn ? '#c75c5c' : '#1a1a1a', fontWeight: 500 }}>{value}</div>
+      <div style={{ color: 'var(--color-muted)' }}>{label}</div>
+      <div style={{ color: warn ? 'var(--color-danger)' : 'var(--color-ink)', fontWeight: 500 }}>{value}</div>
     </div>
   );
 }

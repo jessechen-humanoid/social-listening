@@ -16,17 +16,17 @@ function ErrorContent() {
   const message = errorMessages[error ?? ""] || errorMessages.Default;
 
   return (
-    <div className="w-full max-w-sm rounded-xl p-8 text-center" style={{ backgroundColor: "#ffffff", border: "1px solid #e8e8e5" }}>
-      <h1 className="text-xl font-bold mb-1" style={{ color: "#1a1a1a" }}>
+    <div className="w-full max-w-sm rounded-xl p-8 text-center" style={{ backgroundColor: 'var(--color-card)', border: "1px solid var(--color-line)" }}>
+      <h1 className="text-xl font-bold mb-1" style={{ color: 'var(--color-ink)' }}>
         只要輿情
       </h1>
-      <p className="text-sm mb-6" style={{ color: "#c75c5c" }}>
+      <p className="text-sm mb-6" style={{ color: 'var(--color-danger)' }}>
         {message}
       </p>
       <button
         onClick={() => signIn("google", { callbackUrl: "/" })}
         className="w-full py-2 rounded-lg text-sm font-medium transition"
-        style={{ backgroundColor: "#1a1a1a", color: "#ffffff" }}
+        style={{ backgroundColor: 'var(--color-ink)', color: 'var(--color-card)' }}
       >
         重新登入
       </button>
@@ -36,7 +36,7 @@ function ErrorContent() {
 
 export default function AuthErrorPage() {
   return (
-    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: "#fafaf8" }}>
+    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: 'var(--color-paper)' }}>
       <Suspense>
         <ErrorContent />
       </Suspense>

@@ -85,24 +85,6 @@ export async function createPromptVersion(input: CreatePromptVersionInput): Prom
   );
   return result.rows[0] as PromptVersion;
 }
-
-// Per spec: model_snapshot is immutable on an existing prompt version. Updates
-// to model_snapshot SHALL require creating a new version. Other fields are
-// equally locked once recorded — there is no "edit" API. To change anything,
-// create a new version and (optionally) promote it.
-export async function rejectModelSnapshotChange(
-  existingVersion: PromptVersion,
-  proposedModelSnapshot: string
-): Promise<void> {
-  if (existingVersion.model_snapshot !== proposedModelSnapshot) {
-    throw new Error(
-      `model_snapshot is immutable: existing version ${existingVersion.id} uses ` +
-        `${existingVersion.model_snapshot}, not ${proposedModelSnapshot}. ` +
-        `Create a new prompt version with the new model snapshot instead.`
-    );
-  }
-}
-
 export interface PromoteResult {
   promoted: PromptVersion;
   warning: {

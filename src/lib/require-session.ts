@@ -1,5 +1,6 @@
 import type { Session } from 'next-auth';
 import { auth } from './auth';
+import { unauthorized } from './error-response';
 
 type SessionResult =
   | { session: Session; response: null }
@@ -15,7 +16,7 @@ export async function requireSession(): Promise<SessionResult> {
   if (!session?.user) {
     return {
       session: null,
-      response: Response.json({ error: 'Unauthorized' }, { status: 401 }),
+      response: unauthorized(),
     };
   }
   return { session, response: null };

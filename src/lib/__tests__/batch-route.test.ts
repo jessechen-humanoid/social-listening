@@ -111,8 +111,9 @@ describe('POST /api/tasks deep-batch branch', () => {
       })
     );
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toContain('fb');
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe('VALIDATION');
+    expect(body.error.message).toContain('fb');
 
     const after = await testDb.db.query(`SELECT COUNT(*)::int AS n FROM tasks`);
     expect((after.rows[0] as { n: number }).n).toBe((before.rows[0] as { n: number }).n);

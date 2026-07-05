@@ -1,5 +1,6 @@
 import { query } from '@/lib/db';
 import { requireSession } from '@/lib/require-session';
+import { errorResponse, internalError } from '@/lib/error-response';
 
 export async function DELETE(
   _request: Request,
@@ -18,12 +19,11 @@ export async function DELETE(
     );
 
     if (result.rows.length === 0) {
-      return Response.json({ error: '找不到此任務' }, { status: 404 });
+      return errorResponse('NOT_FOUND', '找不到此任務', 404);
     }
 
     return Response.json({ success: true });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return Response.json({ error: message }, { status: 500 });
+    return internalError(error);
   }
 }

@@ -1,3 +1,5 @@
+import { errorResponse, unauthorized, internalError } from '@/lib/error-response';
+import { BrandSettingsSchema, firstIssueMessage } from '@/lib/schemas';
 import { auth } from '@/lib/auth';
 import {
   getBrand,
@@ -11,17 +13,16 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await auth();
-  if (!session?.user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!session?.user) return unauthorized();
 
   try {
     const { id } = await params;
     const brand = await getBrand(id);
-    if (!brand) return Response.json({ error: 'Brand not found' }, { status: 404 });
+    if (!brand) return errorResponse('NOT_FOUND', 'Brand not found', 404);
     const tasks = await listBrandTasks(id);
     return Response.json({ brand, tasks });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return Response.json({ error: message }, { status: 500 });
+    return internalError(error);
   }
 }
 
@@ -30,18 +31,17 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await auth();
-  if (!session?.user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  if (!session?.user) return unauthorized();
 
   try {
     const { id } = await params;
-    const body = (await request.json()) as { platform_settings?: Partial<PlatformSettings> };
-    if (!body.platform_settings) {
-      return Response.json({ error: 'platform_settings is required' }, { status: 400 });
+    const parsed = BrandSettingsSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return errorResponse('VALIDATION', firstIssueMessage(parsed.error), 400);
     }
-    const brand = await updatePlatformSettings(id, body.platform_settings);
+    const brand = await updatePlatformSettings(id, parsed.data.platform_settings as Partial<PlatformSettings>);
     return Response.json({ brand });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return Response.json({ error: message }, { status: 500 });
+    return internalError(error);
   }
 }

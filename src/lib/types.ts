@@ -1,3 +1,4 @@
+import type { TaskResultStatus } from './task-status';
 import type { FileRole } from './column-mapping';
 import type { Platform } from './platforms';
 
@@ -91,7 +92,7 @@ export interface TaskResult {
   y_score: number | null;
   reasoning: string | null;
   engagement_value: number | null;
-  status: string;
+  status: TaskResultStatus;
   source_file?: string;
 }
 

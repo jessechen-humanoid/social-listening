@@ -2,6 +2,7 @@ import { query } from '@/lib/db';
 import { applyTaskCalibration } from '@/lib/calibration';
 import { aggregateDeepTask } from '@/lib/deep-pipeline/aggregate';
 import { requireSession } from '@/lib/require-session';
+import { errorResponse, internalError } from '@/lib/error-response';
 
 // Recompute a completed deep task's calibrated scores and aggregates from the
 // raw scores already in the DB — zero AI calls. Exists so historical tasks can
@@ -20,21 +21,17 @@ export async function POST(
       [taskId]
     );
     if (task.rows.length === 0) {
-      return Response.json({ error: '找不到此任務' }, { status: 404 });
+      return errorResponse('NOT_FOUND', '找不到此任務', 404);
     }
     const { mode, status } = task.rows[0] as { mode: string; status: string };
     if (mode !== 'deep' || status !== 'completed') {
-      return Response.json(
-        { error: '只能重算已完成的深度任務' },
-        { status: 400 }
-      );
+      return errorResponse('VALIDATION', '只能重算已完成的深度任務', 400);
     }
 
     await applyTaskCalibration(taskId);
     const aggregates = await aggregateDeepTask(taskId);
     return Response.json({ ok: true, aggregates });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return Response.json({ error: message }, { status: 500 });
+    return internalError(error);
   }
 }
