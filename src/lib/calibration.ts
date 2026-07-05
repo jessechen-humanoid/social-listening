@@ -422,7 +422,8 @@ export async function recordCalibrationMapping(input: {
        mapping_function_emotion = EXCLUDED.mapping_function_emotion,
        mapping_function_favor = EXCLUDED.mapping_function_favor,
        mae_emotion = EXCLUDED.mae_emotion,
-       mae_favor = EXCLUDED.mae_favor`,
+       mae_favor = EXCLUDED.mae_favor,
+       accepted = FALSE`,
     [
       id,
       input.setId,
@@ -448,7 +449,9 @@ export async function recordCalibrationMapping(input: {
 }
 
 // Lookup a mapping for a (calibration_set, new_model, prompt_version) triple.
-// Returns null if none — caller should treat calibrated = raw in that case.
+// Only human-accepted mappings are ever applied (spec "Mapping application
+// requires acceptance") — an unreviewed warn-level mapping must not shape
+// client-facing numbers. Returns null if none; caller treats calibrated = raw.
 export async function getCalibrationMapping(
   setId: string,
   newModel: string,
@@ -460,10 +463,18 @@ export async function getCalibrationMapping(
             mapping_function_emotion, mapping_function_favor,
             mae_emotion, mae_favor, accepted, created_at
      FROM calibration_mappings
-     WHERE set_id = $1 AND new_model = $2 AND new_prompt_version_id = $3`,
+     WHERE set_id = $1 AND new_model = $2 AND new_prompt_version_id = $3
+       AND accepted = TRUE`,
     [setId, newModel, newPromptVersionId]
   );
   return (result.rows[0] as CalibrationMapping | undefined) ?? null;
+}
+
+// Human acceptance gate: flips a recorded mapping to accepted so
+// getCalibrationMapping starts returning it. There is deliberately no
+// auto-acceptance — a person reviews the rank-check outcome first.
+export async function acceptCalibrationMapping(mappingId: string): Promise<void> {
+  await query(`UPDATE calibration_mappings SET accepted = TRUE WHERE id = $1`, [mappingId]);
 }
 
 // Apply calibration to a task's stored raw scores.

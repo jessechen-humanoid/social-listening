@@ -1,8 +1,7 @@
-import OpenAI from 'openai';
 import { query } from './db';
+import { callJson, parseScore } from './deep-pipeline/openai-client';
+import { exceedsErrorThreshold } from './error-threshold';
 import { claimTask, createHeartbeat } from './task-claim';
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 interface ScoringConfig {
   conditionText: string;
@@ -61,22 +60,24 @@ ${hasCondition
 }
 
 async function scoreContent(config: ScoringConfig, content: string): Promise<ScoringResult> {
-  const prompt = buildPrompt(config, content);
-
-  const response = await openai.chat.completions.create({
-    model: config.model,
-    messages: [{ role: 'user', content: prompt }],
-    temperature: 0.3,
-    response_format: { type: 'json_object' },
+  // Shared OpenAI path (retry/empty-content/JSON handling live in callJson).
+  // retries: 1 — the caller's loop owns retrying, so attempts don't multiply.
+  const parsed = await callJson<{ condition?: boolean; x_score?: unknown; y_score?: unknown }>({
+    prompt: { model_snapshot: config.model, temperature: 0.3, response_format: 'json_object' },
+    userMessage: buildPrompt(config, content),
+    retries: 1,
   });
 
-  const text = response.choices[0]?.message?.content || '{}';
-  const parsed = JSON.parse(text);
-
+  const x = parseScore(parsed.x_score);
+  const y = parseScore(parsed.y_score);
+  if (x === null || y === null) {
+    // Missing/out-of-range scores are a failed attempt — never NaN into the DB.
+    throw new Error('invalid scores in AI response');
+  }
   return {
     condition: parsed.condition ?? null,
-    x_score: Math.round(Number(parsed.x_score) * 10) / 10,
-    y_score: Math.round(Number(parsed.y_score) * 10) / 10,
+    x_score: Math.round(x * 10) / 10,
+    y_score: Math.round(y * 10) / 10,
   };
 }
 
@@ -157,9 +158,18 @@ export async function processTask(taskId: string) {
       }
     }
 
-    await query(
-      "UPDATE tasks SET status = 'completed', updated_at = NOW() WHERE task_id = $1",
+    // Completion failure threshold: a task whose errored rows exceed 1% of
+    // its total is a failed task, not a quietly incomplete "completed" one.
+    const counts = await query(
+      `SELECT COUNT(*) FILTER (WHERE status = 'error')::int AS errors, COUNT(*)::int AS total
+       FROM task_results WHERE task_id = $1`,
       [taskId]
+    );
+    const { errors, total } = counts.rows[0] as { errors: number; total: number };
+    const finalStatus = exceedsErrorThreshold(errors, total) ? 'error' : 'completed';
+    await query(
+      `UPDATE tasks SET status = $2, updated_at = NOW() WHERE task_id = $1`,
+      [taskId, finalStatus]
     );
   } catch {
     await query(

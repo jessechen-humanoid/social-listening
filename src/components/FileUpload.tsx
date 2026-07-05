@@ -196,7 +196,10 @@ export default function FileUpload({ files, onChange, mode = 'light', platform }
           accept=".csv,.xlsx,.xls"
           multiple
           className="hidden"
-          onChange={e => e.target.files && handleFiles(e.target.files)}
+          onChange={e => {
+            if (e.target.files) handleFiles(e.target.files);
+            e.target.value = '';
+          }}
         />
       </div>
 

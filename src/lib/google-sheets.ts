@@ -180,6 +180,21 @@ async function protectRanges(spreadsheetId: string, tabMap: Record<string, numbe
   );
 }
 
+// Task ids already present in the summary tab. The summary row is written
+// LAST during sync, so its presence marks a fully completed sync — the
+// idempotency key for retries.
+export async function getSyncedTaskIds(spreadsheetId: string): Promise<Set<string>> {
+  const res = await authorizedFetch(
+    `${SHEETS_BASE}/spreadsheets/${spreadsheetId}/values/summary!A:A`
+  );
+  const data = (await res.json()) as { values?: string[][] };
+  const ids = new Set<string>();
+  for (const row of data.values ?? []) {
+    if (row[0] && row[0] !== 'task_id') ids.add(row[0]);
+  }
+  return ids;
+}
+
 export async function appendSummaryRow(
   spreadsheetId: string,
   values: Array<string | number | null>
@@ -231,6 +246,14 @@ export async function syncDeepTaskToSheet(taskId: string): Promise<void> {
   };
 
   const link = await provisionBrandSheet(task.brand_id, task.brand_name);
+
+  // Idempotency: a summary row for this task means a previous sync fully
+  // completed — skip the whole sync instead of appending duplicates.
+  const synced = await getSyncedTaskIds(link.spreadsheet_id);
+  if (synced.has(taskId)) {
+    console.log(`Sheet sync for ${taskId} already complete, skipping`);
+    return;
+  }
 
   const aggRow = await query(
     `SELECT * FROM deep_task_aggregates WHERE task_id = $1 AND platform = $2`,
@@ -289,7 +312,6 @@ export async function syncDeepTaskToSheet(taskId: string): Promise<void> {
     null, // rho_emotion (lives on calibration_mappings)
     null, // rho_favor
   ];
-  await appendSummaryRow(link.spreadsheet_id, summaryRow);
 
   const detail = await query(
     `SELECT stage_name, content_text, emotion_raw, emotion_calibrated,
@@ -333,7 +355,11 @@ export async function syncDeepTaskToSheet(taskId: string): Promise<void> {
     r.parent_post_url,
     r.platform,
   ]);
+  // Details first, summary LAST: the summary row is the completion marker
+  // that makes retries idempotent (spec "Idempotent sync with summary row
+  // as completion marker").
   await appendDetailRows(link.spreadsheet_id, task.platform, detailRows);
+  await appendSummaryRow(link.spreadsheet_id, summaryRow);
 
   await query(
     `UPDATE google_sheet_links SET last_synced_at = NOW() WHERE brand_id = $1`,

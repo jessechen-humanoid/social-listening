@@ -46,6 +46,7 @@ export default function WeeklyTimeline({
 
   return (
     <canvas
+      data-chart="timeline"
       ref={canvasRef}
       className="w-full rounded-xl"
       style={{ height: 360, backgroundColor: '#ffffff', border: '1px solid #e8e8e5' }}

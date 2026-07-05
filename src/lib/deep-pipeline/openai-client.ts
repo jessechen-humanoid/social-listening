@@ -3,8 +3,16 @@ import type { PromptVersion } from '../prompt-versions';
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+// Fixed short system message. The filled prompt goes ONLY in the user message —
+// sending prompt_text as system used to transmit the whole template a second
+// time (with unfilled {placeholders}), doubling input tokens and deviating
+// from the Python pipeline the fossil prompts were calibrated against.
+const SYSTEM_MESSAGE = '你是行銷領域的文本分析工作者，請一律以 JSON 格式回覆。';
+
 export interface CallOptions {
-  prompt: PromptVersion;
+  // Only the model/temperature/format fields are read — the filled prompt
+  // travels in userMessage, so light mode can pass a synthetic descriptor.
+  prompt: Pick<PromptVersion, 'model_snapshot' | 'temperature' | 'response_format'>;
   userMessage: string;
   retries?: number;
 }
@@ -31,11 +39,16 @@ export async function callJson<T = unknown>({
             ? { type: 'json_object' }
             : { type: 'text' },
         messages: [
-          { role: 'system', content: prompt.prompt_text },
+          { role: 'system', content: SYSTEM_MESSAGE },
           { role: 'user', content: userMessage },
         ],
       });
-      const text = response.choices[0]?.message?.content ?? '{}';
+      const text = response.choices[0]?.message?.content;
+      if (!text || !text.trim()) {
+        // Refusal / content filter / length cutoff: a failed attempt for the
+        // retry loop, never a silently-empty result object.
+        throw new Error('empty AI response content');
+      }
       return JSON.parse(text) as T;
     } catch (err) {
       lastError = err;
@@ -56,8 +69,19 @@ export function fillPlaceholders(template: string, values: Record<string, string
 }
 
 // Coerce the AI's "score" field (which may be int, float, or "NAN") to a finite number,
-// or null if unparseable.
+// or null if unparseable. Scores live on a 0–10 scale; out-of-range values are
+// treated as unparseable (logged) so an outlier can never distort aggregates.
 export function parseScore(raw: unknown): number | null {
+  const n = coerceFinite(raw);
+  if (n === null) return null;
+  if (n < 0 || n > 10) {
+    console.warn(`parseScore: out-of-range score ${n} rejected`);
+    return null;
+  }
+  return n;
+}
+
+function coerceFinite(raw: unknown): number | null {
   if (raw === null || raw === undefined) return null;
   if (typeof raw === 'string') {
     const trimmed = raw.trim();

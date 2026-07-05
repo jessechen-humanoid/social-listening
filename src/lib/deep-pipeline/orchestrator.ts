@@ -7,6 +7,7 @@ import type { DeepStageName } from '../seed-prompts';
 import type { FileRole, ColumnMapping } from '../column-mapping';
 import { applyTaskCalibration } from '../calibration';
 import { claimTask, createHeartbeat } from '../task-claim';
+import { exceedsErrorThreshold } from '../error-threshold';
 import { aggregateDeepTask } from './aggregate';
 import { syncDeepTaskWithRetry } from '../google-sheets';
 import {
@@ -26,6 +27,16 @@ export type PipelineStageName =
   | DeepStageName
   | 'B_link'
   | 'C_dedupe';
+
+// Stages whose rows can end in error status (AI-scoring stages); the 1%
+// failure threshold applies to these only — link/dedupe stages don't call AI.
+const AI_STAGES = new Set<PipelineStageName>([
+  'A_related_filter',
+  'A_emotion_favor',
+  'B_tag_friend_filter',
+  'B_emotion_favor',
+  'C_emotion_favor',
+]);
 
 const STAGE_RUNNERS: Record<
   PipelineStageName,
@@ -195,8 +206,7 @@ export async function runDeepTask(taskId: string): Promise<void> {
   // Claim already set status = 'processing' and stamped heartbeat_at.
   const stages = pipelineStagesForPlatform(platform);
 
-  try {
-    for (const stage of stages) {
+  for (const stage of stages) {
       const status = await getStageStatus(taskId, stage);
       if (status === 'completed') continue;
 
@@ -222,6 +232,35 @@ export async function runDeepTask(taskId: string): Promise<void> {
       const runner = STAGE_RUNNERS[stage];
       try {
         const outcome = await runner(ctx);
+
+        // Failure threshold (spec "Stage failure threshold"): errored rows
+        // above 1% of this stage's input fail the stage and the task —
+        // a report computed from a crippled stage must never look "completed".
+        if (AI_STAGES.has(stage)) {
+          const err = await query(
+            `SELECT COUNT(*)::int AS n FROM task_results
+             WHERE task_id = $1 AND status = 'error' AND reasoning LIKE $2`,
+            [taskId, `${stage}: %`]
+          );
+          const stageErrors = (err.rows[0] as { n: number }).n;
+          if (exceedsErrorThreshold(stageErrors, outcome.inputCount)) {
+            const msg = `${stageErrors}/${outcome.inputCount} rows failed (threshold 1%)`;
+            await query(
+              `UPDATE deep_task_stages
+               SET status = 'error', error = $3, completed_at = NOW(),
+                   input_count = $4, output_count = $5
+               WHERE task_id = $1 AND stage_name = $2`,
+              [taskId, stage, msg, outcome.inputCount, outcome.outputCount]
+            );
+            await query(
+              `UPDATE tasks SET status = 'error', updated_at = NOW() WHERE task_id = $1`,
+              [taskId]
+            );
+            console.error(`Deep task ${taskId} failed at ${stage}: ${msg}`);
+            return;
+          }
+        }
+
         await query(
           `UPDATE deep_task_stages
            SET status = 'completed', completed_at = NOW(),
@@ -252,11 +291,20 @@ export async function runDeepTask(taskId: string): Promise<void> {
       }
     }
 
-    // Apply calibration mapping (raw → calibrated). Identity if no mapping exists.
-    await applyTaskCalibration(taskId);
-
-    // Compute weighted quadrants + weekly timeline aggregates
-    await aggregateDeepTask(taskId);
+    // Calibration + aggregation failures must surface as task errors — a task
+    // whose runner stopped can never be left sitting in processing status.
+    try {
+      // Apply calibration mapping (raw → calibrated). Identity if no mapping exists.
+      await applyTaskCalibration(taskId);
+      // Compute weighted quadrants + weekly timeline aggregates
+      await aggregateDeepTask(taskId);
+    } catch (err) {
+      await query(
+        `UPDATE tasks SET status = 'error', updated_at = NOW() WHERE task_id = $1`,
+        [taskId]
+      );
+      throw err;
+    }
 
     await query(
       `UPDATE tasks SET status = 'completed', updated_at = NOW() WHERE task_id = $1`,
@@ -267,10 +315,6 @@ export async function runDeepTask(taskId: string): Promise<void> {
     syncDeepTaskWithRetry(taskId).catch((err) => {
       console.error(`Sheet sync failed for ${taskId}:`, err);
     });
-  } catch (err) {
-    // Already recorded above; rethrow for caller logging
-    throw err;
-  }
 }
 
 async function loadPromptBindings(
@@ -310,7 +354,7 @@ function applyForumFilter(
   forumFilter: string[] | null | undefined
 ): Array<Record<string, unknown>> {
   if (!forumFilter || !mapping.forum) return rows;
-  const allowed = new Set(forumFilter);
+  const allowed = new Set(forumFilter.map((f) => f.trim()));
   return rows.filter((r) => {
     const v = r[mapping.forum as string];
     return typeof v === 'string' && allowed.has(v.trim());
@@ -323,8 +367,14 @@ function toNumber(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function toIsoOrNull(v: unknown): string | null {
+export function toIsoOrNull(v: unknown): string | null {
   if (v === null || v === undefined || v === '') return null;
+  // Excel serial date numbers (xlsx often yields these instead of strings):
+  // days since the 1899-12-30 epoch. Plausible range ≈ 1968–2064.
+  if (typeof v === 'number' && v > 25000 && v < 60000) {
+    const excelEpoch = Date.UTC(1899, 11, 30);
+    return new Date(excelEpoch + v * 86_400_000).toISOString();
+  }
   const d = v instanceof Date ? v : new Date(String(v));
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }

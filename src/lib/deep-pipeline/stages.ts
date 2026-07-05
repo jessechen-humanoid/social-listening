@@ -286,21 +286,34 @@ export async function runStageBEmotionFavor(ctx: StageContext): Promise<StageOut
   const prompt = ctx.prompts.get(DEEP_STAGES.B_EMOTION_FAVOR);
   if (!prompt) throw new Error(`No prompt bound for ${DEEP_STAGES.B_EMOTION_FAVOR}`);
 
-  // Fetch pending B rows + their parent post content (from stage A).
-  const pending = await query(
-    `SELECT b.result_id, b.content_text, b.parent_post_url, a.content_text AS post_content
-     FROM task_results b
-     LEFT JOIN task_results a
-       ON a.task_id = b.task_id
-      AND a.stage_name = 'A'
-      AND a.post_url = b.parent_post_url
-     WHERE b.task_id = $1 AND b.stage_name = 'B'
-       AND b.filtered_out = FALSE
-       AND b.emotion_raw IS NULL
-     ORDER BY b.parent_post_url, b.row_index`,
+  // Parent post content via an in-memory Map instead of a SQL JOIN: duplicate
+  // post URLs in the hotpost data would fan a join out and score the same
+  // comment multiple times. First row per URL wins; each comment appears once.
+  const posts = await query(
+    `SELECT post_url, content_text
+     FROM task_results
+     WHERE task_id = $1 AND stage_name = 'A' AND post_url IS NOT NULL
+     ORDER BY row_index`,
     [ctx.taskId]
   );
-  const rows = pending.rows as CommentBatchRow[];
+  const postContent = new Map<string, string>();
+  for (const p of posts.rows as Array<{ post_url: string; content_text: string | null }>) {
+    if (!postContent.has(p.post_url)) postContent.set(p.post_url, p.content_text ?? '');
+  }
+
+  const pending = await query(
+    `SELECT result_id, content_text, parent_post_url
+     FROM task_results
+     WHERE task_id = $1 AND stage_name = 'B'
+       AND filtered_out = FALSE
+       AND emotion_raw IS NULL
+     ORDER BY parent_post_url, row_index`,
+    [ctx.taskId]
+  );
+  const rows = (pending.rows as CommentBatchRow[]).map((r) => ({
+    ...r,
+    post_content: postContent.get(r.parent_post_url) ?? '',
+  }));
 
   // Group by parent_post_url and process in batches of 5.
   const groups = new Map<string, CommentBatchRow[]>();
@@ -383,13 +396,21 @@ async function scoreCommentBatch(
   let written = 0;
   for (let i = 0; i < batch.length; i++) {
     const { emotion, favor } = scores[i];
-    await query(
-      `UPDATE task_results
-       SET emotion_raw = $1, favor_raw = $2, status = 'B_emotion_favor_done'
-       WHERE result_id = $3`,
-      [emotion, favor, batch[i].result_id]
-    );
-    if (emotion !== null && favor !== null) written++;
+    if (emotion !== null && favor !== null) {
+      await query(
+        `UPDATE task_results
+         SET emotion_raw = $1, favor_raw = $2, status = 'B_emotion_favor_done'
+         WHERE result_id = $3`,
+        [emotion, favor, batch[i].result_id]
+      );
+      written++;
+    } else {
+      // Consistent with the other AI stages: exhausted retries end in error.
+      await query(
+        `UPDATE task_results SET status = 'error', reasoning = $1 WHERE result_id = $2`,
+        ['B_emotion_favor: scoring failed after retries', batch[i].result_id]
+      );
+    }
   }
   return written;
 }

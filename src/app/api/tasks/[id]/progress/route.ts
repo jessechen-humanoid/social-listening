@@ -1,4 +1,5 @@
 import { query } from '@/lib/db';
+import { getDeepTaskAggregates } from '@/lib/deep-pipeline/aggregate';
 import { getStageProgress } from '@/lib/deep-pipeline/orchestrator';
 import { requireSession } from '@/lib/require-session';
 
@@ -29,6 +30,22 @@ export async function GET(
 
     const stages = task.mode === 'deep' ? await getStageProgress(taskId) : [];
 
+    // Deep tasks carry their persisted aggregates (quadrants, centroid, weekly
+    // buckets) and the brand's platform display settings, so the results view
+    // renders charts without extra round trips.
+    let aggregates: unknown = undefined;
+    let platformSettings: unknown = undefined;
+    if (task.mode === 'deep') {
+      aggregates = await getDeepTaskAggregates(taskId);
+      const brand = await query(
+        `SELECT b.platform_settings FROM brands b JOIN tasks t ON t.brand_id = b.id
+         WHERE t.task_id = $1`,
+        [taskId]
+      );
+      platformSettings =
+        (brand.rows[0] as { platform_settings?: unknown } | undefined)?.platform_settings ?? null;
+    }
+
     return Response.json({
       task_id: task.task_id,
       status: task.status,
@@ -39,6 +56,7 @@ export async function GET(
       config: task.config,
       created_at: task.created_at,
       stages,
+      ...(task.mode === 'deep' ? { aggregates, platform_settings: platformSettings } : {}),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';

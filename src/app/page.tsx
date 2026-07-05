@@ -7,6 +7,7 @@ import DeepConfig from '@/components/DeepConfig';
 import ColumnMappingStep, { type ConfirmedMappings } from '@/components/ColumnMappingStep';
 import ScatterPlot, { exportScatterPlotPNG, computeQuadrantCounts } from '@/components/ScatterPlot';
 import ProgressBar from '@/components/ProgressBar';
+import WeeklyTimeline from '@/components/WeeklyTimeline';
 import { exportReportCSV } from '@/lib/export-report';
 import { getBrowserUuid } from '@/lib/browser-uuid';
 import type {
@@ -55,7 +56,13 @@ export default function Home() {
   const [results, setResults] = useState<TaskResult[]>([]);
   const [history, setHistory] = useState<TaskProgress[]>([]);
   const [browserUuid, setBrowserUuid] = useState('');
+  // In-flight lock: creating a task uploads MBs of rows — double-clicks must
+  // not create duplicate (expensive) tasks.
+  const [submitting, setSubmitting] = useState(false);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Monotonic guard: rapid clicks on two history tasks must not interleave —
+  // only the latest requested task may write result state.
+  const viewSeqRef = useRef(0);
 
   // Initialize UUID — defer setState to avoid cascading effect render
   useEffect(() => {
@@ -103,7 +110,8 @@ export default function Home() {
     : true;
 
   const handleStartAnalysis = async () => {
-    if (!canSubmit || !customValid) return;
+    if (!canSubmit || !customValid || submitting) return;
+    setSubmitting(true);
 
     try {
       const payload = {
@@ -136,6 +144,8 @@ export default function Home() {
       }
     } catch (err) {
       alert(err instanceof Error ? err.message : '發生錯誤');
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -149,6 +159,8 @@ export default function Home() {
     (deepConfig.platform !== 'fb' || files.length === 3);
 
   const handleStartDeepAnalysis = async (mappings: ConfirmedMappings) => {
+    if (submitting) return;
+    setSubmitting(true);
     try {
       const filesPayload = files.map((f) => {
         const m = mappings.perFile.find((x) => x.fileId === f.id);
@@ -185,10 +197,13 @@ export default function Home() {
       }
     } catch (err) {
       alert(err instanceof Error ? err.message : '發生錯誤');
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleViewResult = async (taskId: string) => {
+    const seq = ++viewSeqRef.current;
     setCurrentTaskId(taskId);
     try {
       const [progressRes, resultsRes] = await Promise.all([
@@ -199,6 +214,7 @@ export default function Home() {
         progressRes.json(),
         resultsRes.json(),
       ]);
+      if (seq !== viewSeqRef.current) return; // a newer click superseded this one
 
       setProgress(progressData);
       setResults(resultsData.results || []);
@@ -334,7 +350,7 @@ export default function Home() {
 
           <button
             onClick={handleStartAnalysis}
-            disabled={!canSubmit || !customValid}
+            disabled={!canSubmit || !customValid || submitting}
             className="w-full py-3 rounded-lg font-medium text-sm transition disabled:opacity-40"
             style={{ backgroundColor: '#1a1a1a', color: '#ffffff' }}
           >
@@ -370,16 +386,26 @@ export default function Home() {
             </div>
           )}
 
-          {/* Quadrant labels - above chart */}
+          {/* Quadrant labels - above chart. Deep tasks read percentages from the
+              persisted aggregates (engagement-weighted); light tasks count rows. */}
           {(() => {
-            const visible = results.filter(r => {
-              if (r.status !== 'completed' || r.x_score === null || r.y_score === null) return false;
-              if (viewConfig.conditionFilterEnabled && viewConfig.conditionText) return r.condition_result === true;
-              return true;
-            });
-            const counts = computeQuadrantCounts(visible.map(r => ({ x: r.x_score!, y: r.y_score! })));
-            const total = visible.length || 1;
-            const pct = counts.map(c => Math.round((c / total) * 100));
+            const isDeep = progress?.mode === 'deep';
+            const agg = isDeep ? progress?.aggregates?.[0] : undefined;
+            let pct: number[];
+            if (isDeep) {
+              const q = agg?.quadrants;
+              // Display order: [UL 超級黑粉, UR 超級鐵粉, LL 理性黑粉, LR 理性粉絲]
+              pct = q ? [q.tl, q.tr, q.bl, q.br].map(v => Math.round(v)) : [0, 0, 0, 0];
+            } else {
+              const visible = results.filter(r => {
+                if (r.status !== 'completed' || r.x_score === null || r.y_score === null) return false;
+                if (viewConfig.conditionFilterEnabled && viewConfig.conditionText) return r.condition_result === true;
+                return true;
+              });
+              const counts = computeQuadrantCounts(visible.map(r => ({ x: r.x_score!, y: r.y_score! })));
+              const total = visible.length || 1;
+              pct = counts.map(c => Math.round((c / total) * 100));
+            }
             return (
               <>
                 <div className="flex justify-between text-sm" style={{ color: '#6b6b6b' }}>
@@ -393,11 +419,19 @@ export default function Home() {
                   conditionFilterEnabled={viewConfig.conditionFilterEnabled}
                   conditionText={viewConfig.conditionText}
                   dotColor={viewConfig.dotColor}
+                  weighted={isDeep}
+                  platformAlpha={isDeep ? progress?.platform_settings?.scatter_alpha ?? undefined : undefined}
                 />
                 <div className="flex justify-between text-sm" style={{ color: '#6b6b6b' }}>
                   <span>{viewConfig.mode === 'brand' ? `理性黑粉 ${pct[2]}%` : `${pct[2]}%`}</span>
                   <span>{viewConfig.mode === 'brand' ? `理性粉絲 ${pct[3]}%` : `${pct[3]}%`}</span>
                 </div>
+                {isDeep && (
+                  <WeeklyTimeline
+                    buckets={agg?.weekly_buckets ?? []}
+                    title="逐週聲量（正面 / 負面）"
+                  />
+                )}
               </>
             );
           })()}
@@ -435,17 +469,29 @@ export default function Home() {
                 <button
                   onClick={async () => {
                     if (!currentTaskId) return;
-                    // Bundle just contains placeholder charts; the real charts are
-                    // composed in the canvas above and serialized by the caller.
-                    // Send empty charts array to get a metadata-only zip; users
-                    // typically use the XLSX export instead.
+                    // Serialize the rendered chart canvases so the zip contains
+                    // the real images the user is looking at.
+                    const charts: Array<{ filename: string; base64: string }> = [];
+                    for (const [selector, filename] of [
+                      ['canvas[data-chart="scatter"]', 'scatter.png'],
+                      ['canvas[data-chart="timeline"]', 'weekly-timeline.png'],
+                    ] as const) {
+                      const canvas = document.querySelector<HTMLCanvasElement>(selector);
+                      if (canvas) {
+                        charts.push({
+                          filename,
+                          base64: canvas.toDataURL('image/png').split(',')[1],
+                        });
+                      }
+                    }
                     const res = await fetch(`/api/tasks/${currentTaskId}/export-bundle`, {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ charts: [] }),
+                      body: JSON.stringify({ charts }),
                     });
                     if (res.headers.get('X-Async-Mode') === 'true') {
-                      alert('Preparing bundle... 大型任務改走背景處理。');
+                      alert('大型任務打包改走背景處理，請稍後至歷史紀錄下載。');
+                      return;
                     }
                     const blob = await res.blob();
                     const url = URL.createObjectURL(blob);

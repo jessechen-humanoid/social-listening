@@ -100,6 +100,9 @@ export interface TaskProgress {
   config: AnalysisConfig;
   created_at: string;
   mode?: 'light' | 'deep';
+  // Deep tasks: persisted aggregates + brand display settings (progress API).
+  aggregates?: import('./deep-pipeline/aggregate').PlatformAggregate[];
+  platform_settings?: { scatter_alpha?: Record<string, number> } | null;
   stages?: Array<{
     stage_name: string;
     status: string;

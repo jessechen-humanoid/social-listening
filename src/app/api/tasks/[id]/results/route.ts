@@ -15,6 +15,8 @@ export async function GET(
       `SELECT r.result_id, r.task_id, r.file_id, r.row_index, r.content_text,
               r.condition_result, r.x_score, r.y_score, r.reasoning,
               r.engagement_value, r.status,
+              r.emotion_calibrated, r.favor_calibrated,
+              r.filtered_out, r.not_real_user, r.platform,
               f.filename as source_file
        FROM task_results r
        JOIN task_files f ON r.file_id = f.file_id
@@ -28,6 +30,9 @@ export async function GET(
       x_score: row.x_score !== null ? parseFloat(row.x_score) : null,
       y_score: row.y_score !== null ? parseFloat(row.y_score) : null,
       engagement_value: row.engagement_value !== null ? parseFloat(row.engagement_value) : null,
+      // Deep-mode fields: the weighted scatter plots calibrated scores.
+      emotion_calibrated: row.emotion_calibrated !== null ? parseFloat(row.emotion_calibrated) : null,
+      favor_calibrated: row.favor_calibrated !== null ? parseFloat(row.favor_calibrated) : null,
     }));
 
     return Response.json({ results: rows });

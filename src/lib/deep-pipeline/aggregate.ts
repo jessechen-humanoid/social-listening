@@ -1,4 +1,5 @@
 import { query } from '../db';
+import { engagementWeight } from '../engagement-weight';
 
 interface ScoredRow {
   emotion_calibrated: number | null;
@@ -32,11 +33,6 @@ export interface PlatformAggregate {
 
 const AXIS_MID = 5;
 
-function sqrtEng(v: number | null): number {
-  const n = v ?? 0;
-  return n > 0 ? Math.sqrt(n) : 0;
-}
-
 // Format a Date as the Monday of its ISO week, YYYY-MM-DD.
 function isoWeekStart(d: Date): string {
   const date = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
@@ -57,11 +53,13 @@ export function computePlatformAggregate(
 
   let sample = 0;
   for (const r of rows) {
-    const favor = r.favor_calibrated;
-    const emotion = r.emotion_calibrated;
+    // NUMERIC columns arrive from pg as strings — coerce before any comparison,
+    // or favor "5" leaks into the negative weekly bucket via string ordering.
+    const favor = r.favor_calibrated === null ? null : Number(r.favor_calibrated);
+    const emotion = r.emotion_calibrated === null ? null : Number(r.emotion_calibrated);
     if (favor === null || emotion === null) continue;
-    const w = sqrtEng(r.engagement_value);
-    if (w === 0) continue;
+    // sqrt(engagement + 1): every non-excluded row counts (weight >= 1).
+    const w = engagementWeight(r.engagement_value);
 
     sample++;
     totalWeight += w;
@@ -86,13 +84,18 @@ export function computePlatformAggregate(
     }
   }
 
+  // Percentage denominator is the sum of the four quadrant weights (Python
+  // calculate_4dim.py parity): on-axis rows are outside the denominator, so
+  // the four percentages always sum to 100.
+  const quadrantTotal =
+    quadrantWeights.tr + quadrantWeights.tl + quadrantWeights.bl + quadrantWeights.br;
   const quadrants: QuadrantPct =
-    totalWeight > 0
+    quadrantTotal > 0
       ? {
-          tr: (quadrantWeights.tr / totalWeight) * 100,
-          tl: (quadrantWeights.tl / totalWeight) * 100,
-          bl: (quadrantWeights.bl / totalWeight) * 100,
-          br: (quadrantWeights.br / totalWeight) * 100,
+          tr: (quadrantWeights.tr / quadrantTotal) * 100,
+          tl: (quadrantWeights.tl / quadrantTotal) * 100,
+          bl: (quadrantWeights.bl / quadrantTotal) * 100,
+          br: (quadrantWeights.br / quadrantTotal) * 100,
         }
       : { tr: 0, tl: 0, bl: 0, br: 0 };
 

@@ -2,6 +2,7 @@
 
 import { useRef, useEffect, useCallback } from 'react';
 import { applyJitter } from '@/lib/jitter';
+import { engagementWeight } from '@/lib/engagement-weight';
 import type { TaskResult } from '@/lib/types';
 
 interface ScatterPlotProps {
@@ -53,7 +54,7 @@ function computeCentroid(points: { x: number; y: number; engagement: number }[])
   let sumX = 0;
   let sumY = 0;
   for (const p of points) {
-    const w = p.engagement || 1;
+    const w = engagementWeight(p.engagement);
     sumX += p.x * w;
     sumY += p.y * w;
     totalWeight += w;
@@ -175,11 +176,14 @@ export default function ScatterPlot({
       const yRaw = weighted ? d.emotion_calibrated ?? r.y_score! : r.y_score!;
       const { jx, jy } = applyJitter(Number(xRaw), Number(yRaw), r.row_index);
       const eng = r.engagement_value || 0;
-      const radius = eng > 0 ? baseRadius + Math.sqrt(eng) * scaleFactor : baseRadius;
+      // Radius via the shared weight function (sqrt(e+1)) so chart sizing and
+      // aggregate weighting can never drift apart.
+      const radius = baseRadius + (engagementWeight(eng) - 1) * scaleFactor;
       const alpha = weighted && d.platform
         ? platformAlpha[d.platform] ?? 0.1
         : 0.35;
-      return { x: jx, y: jy, radius, engagement: eng, alpha };
+      // rawX/rawY: statistics use unjittered scores; jitter moves pixels only.
+      return { x: jx, y: jy, rawX: Number(xRaw), rawY: Number(yRaw), radius, engagement: eng, alpha };
     });
 
     // Quadrant labels are rendered outside the chart in page.tsx, not inside the canvas
@@ -194,9 +198,12 @@ export default function ScatterPlot({
       ctx.globalAlpha = 1;
     }
 
-    // Centroid
+    // Centroid — from unjittered scores (spec "Quadrant statistics computed
+    // from unjittered scores").
     if (points.length > 0) {
-      const { cx, cy } = computeCentroid(points);
+      const { cx, cy } = computeCentroid(
+        points.map(p => ({ x: p.rawX, y: p.rawY, engagement: p.engagement }))
+      );
       const sx = scaleX(cx);
       const sy = scaleY(cy);
       const arm = 10;
@@ -237,6 +244,7 @@ export default function ScatterPlot({
 
   return (
     <canvas
+      data-chart="scatter"
       ref={canvasRef}
       className="w-full rounded-xl"
       style={{
@@ -349,12 +357,13 @@ export function exportScatterPlotPNG(
   const points = filteredResults.map(r => {
     const { jx, jy } = applyJitter(r.x_score!, r.y_score!, r.row_index);
     const eng = r.engagement_value || 0;
-    const radius = eng > 0 ? baseR + Math.sqrt(eng) * sf : baseR;
-    return { x: jx, y: jy, radius, engagement: eng };
+    const radius = baseR + (engagementWeight(eng) - 1) * sf;
+    return { x: jx, y: jy, rawX: r.x_score!, rawY: r.y_score!, radius, engagement: eng };
   });
 
-  // Quadrant labels — rendered outside chart area (top and bottom)
-  const quadCounts = computeQuadrantCounts(points);
+  // Quadrant labels — computed from UNJITTERED scores so the exported PNG
+  // always matches the on-screen percentages.
+  const quadCounts = computeQuadrantCounts(points.map(p => ({ x: p.rawX, y: p.rawY })));
   const total = points.length || 1;
   const pcts = quadCounts.map(c => Math.round((c / total) * 100));
   ctx.fillStyle = textColor;
@@ -382,9 +391,11 @@ export function exportScatterPlotPNG(
     ctx.globalAlpha = 1;
   }
 
-  // Centroid
+  // Centroid — unjittered, same as on-screen.
   if (points.length > 0) {
-    const { cx, cy } = computeCentroid(points);
+    const { cx, cy } = computeCentroid(
+      points.map(p => ({ x: p.rawX, y: p.rawY, engagement: p.engagement }))
+    );
     const sx = scaleX(cx);
     const sy = scaleY(cy);
     const arm = 12;

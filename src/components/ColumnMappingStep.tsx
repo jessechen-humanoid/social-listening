@@ -160,6 +160,16 @@ export default function ColumnMappingStep({
     if (allForums.includes('Dcard')) initial.add('Dcard');
     return initial;
   });
+  // The forum column may be mapped after mount; when the forum list first
+  // appears, apply the default "Dcard only" selection once (render-phase
+  // state adjustment — the React-sanctioned pattern for derived resets).
+  const [forumListSeen, setForumListSeen] = useState(allForums.length > 0);
+  if (!forumListSeen && allForums.length > 0) {
+    setForumListSeen(true);
+    if (allForums.includes('Dcard')) {
+      setCheckedForums(new Set(['Dcard']));
+    }
+  }
 
   const updateMapping = (fileId: string, field: LogicalField, value: string) => {
     setMappings((prev) =>
@@ -187,8 +197,10 @@ export default function ColumnMappingStep({
 
   const blocked = validations.some((v) => !v.result.ok);
 
+  const [confirming, setConfirming] = useState(false);
   const handleConfirm = () => {
-    if (blocked) return;
+    if (blocked || confirming) return;
+    setConfirming(true); // parent navigates away on success; lock prevents double-submit
     onConfirm({
       perFile: mappings,
       forumFilter: dcardFile ? Array.from(checkedForums) : null,
@@ -326,7 +338,7 @@ export default function ColumnMappingStep({
         )}
         <button
           onClick={handleConfirm}
-          disabled={blocked}
+          disabled={blocked || confirming}
           className="text-sm px-4 py-2 rounded-lg transition"
           style={{
             backgroundColor: blocked ? '#e8e8e5' : '#2d2d2d',
