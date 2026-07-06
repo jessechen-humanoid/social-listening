@@ -6,10 +6,9 @@ import { getPromptByVersionId, getTaskPromptBindings } from '../prompt-versions'
 import type { DeepStageName } from '../seed-prompts';
 import type { FileRole, ColumnMapping } from '../column-mapping';
 import { applyTaskCalibration } from '../calibration';
-import { claimTask, createHeartbeat } from '../task-claim';
+import { claimTask, createHeartbeat, TaskCancelledError } from '../task-claim';
 import { exceedsErrorThreshold } from '../error-threshold';
 import { aggregateDeepTask } from './aggregate';
-import { syncDeepTaskWithRetry } from '../google-sheets';
 import {
   runStageARelatedFilter,
   runStageAEmotionFavor,
@@ -291,6 +290,23 @@ export async function runDeepTask(taskId: string): Promise<void> {
           [taskId, outcome.outputCount]
         );
       } catch (err) {
+        if (err instanceof TaskCancelledError) {
+          // Terminal cancelled state (spec "Cooperative task cancellation"):
+          // keep scored rows, mark the in-flight stage, skip calibration,
+          // aggregation and ledger sync.
+          await query(
+            `UPDATE deep_task_stages
+             SET status = 'error', error = '使用者取消', completed_at = NOW()
+             WHERE task_id = $1 AND stage_name = $2 AND status = 'running'`,
+            [taskId, stage]
+          );
+          await query(
+            `UPDATE tasks SET status = 'cancelled', updated_at = NOW() WHERE task_id = $1`,
+            [taskId]
+          );
+          console.log(`Deep task ${taskId} cancelled by user request during ${stage}`);
+          return;
+        }
         const msg = err instanceof Error ? err.message : String(err);
         await query(
           `UPDATE deep_task_stages
@@ -326,10 +342,6 @@ export async function runDeepTask(taskId: string): Promise<void> {
       [taskId]
     );
 
-    // Append to brand's Google Sheet ledger (best-effort; isolated from task status).
-    syncDeepTaskWithRetry(taskId).catch((err) => {
-      console.error(`Sheet sync failed for ${taskId}:`, err);
-    });
 }
 
 async function loadPromptBindings(

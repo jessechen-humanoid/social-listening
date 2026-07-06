@@ -8,6 +8,7 @@ import ColumnMappingStep, { type ConfirmedMappings } from '@/components/ColumnMa
 import { getBrowserUuid } from '@/lib/browser-uuid';
 import { apiFetch } from '@/lib/api-client';
 import { REQUIRED_ROLES_BY_PLATFORM } from '@/lib/validate-task-input';
+import { slimRow } from '@/lib/column-mapping';
 import { useUploadDraft } from '@/lib/upload-draft-context';
 import type { Platform } from '@/lib/platforms';
 
@@ -63,11 +64,14 @@ export default function DeepFlow() {
             const slot = mappings.perSlot.find(
               m => m.platform === platform && m.role === f.role
             );
+            const mapping = slot?.mapping ?? {};
             return {
               filename: f.filename,
               role: f.role,
-              columnMapping: slot?.mapping ?? {},
-              data: f.data,
+              columnMapping: mapping,
+              // Only mapped columns travel (spec "Upload payload carries only
+              // mapped columns") — includes the forum column via the mapping.
+              data: f.data.map(row => slimRow(row, Object.values(mapping))),
               forumFilter: platform === 'dcard' ? mappings.forumFilter : null,
             };
           }),

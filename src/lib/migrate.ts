@@ -133,6 +133,8 @@ async function runMigrations() {
   // Execution lease for the single-runner claim: NULL means the row predates
   // this column (legacy) and is treated as claimable.
   await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ`);
+  // Cooperative cancellation flag (spec "Cooperative task cancellation").
+  await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS cancel_requested BOOLEAN NOT NULL DEFAULT FALSE`);
   // Tasks born from one batch submission share a batch_id (NULL for legacy /
   // single-created tasks); the history UI groups them into one card.
   await query(`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS batch_id UUID`);

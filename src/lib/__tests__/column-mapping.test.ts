@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getLogicalFields, guessColumnMapping, validateMapping } from '../column-mapping';
+import { slimRow, getLogicalFields, guessColumnMapping, validateMapping } from '../column-mapping';
 
 // Spec "Guess patterns cover observed Qsearch column names" — example table
 // rows use the real export headers from 麥當勞好感度 Q2.
@@ -96,5 +96,43 @@ describe('platform-aware author_id requirement', () => {
     const igSpec = getLogicalFields('hotpost', 'ig').find((f) => f.field === 'author_id');
     expect(fbSpec?.required).toBe(true);
     expect(igSpec?.required).toBe(false);
+  });
+});
+
+// Spec "Upload payload carries only mapped columns".
+describe('slimRow', () => {
+  it('keeps only mapped columns from a wide row', () => {
+    const wide: Record<string, unknown> = {};
+    for (let i = 0; i < 20; i++) wide[`col_${i}`] = i;
+    wide.content = '文字';
+    wide.like_count = 42;
+    const mapping = {
+      content: 'content',
+      engagement_value: 'like_count',
+      posted_at: 'col_1',
+      post_url: 'col_2',
+      author_id: 'col_3',
+      forum: 'col_4',
+    };
+    const slim = slimRow(wide, Object.values(mapping));
+    expect(Object.keys(slim).sort()).toEqual(
+      ['col_1', 'col_2', 'col_3', 'col_4', 'content', 'like_count'].sort()
+    );
+    expect(slim.content).toBe('文字');
+    expect(slim.like_count).toBe(42);
+  });
+
+  it('row keys are a subset of the mapping values', () => {
+    const row = { a: 1, b: 2, c: 3 };
+    const cols = ['a', 'c', undefined, 'missing'];
+    const slim = slimRow(row, cols);
+    for (const k of Object.keys(slim)) {
+      expect(cols).toContain(k);
+    }
+    expect(slim).toEqual({ a: 1, c: 3 });
+  });
+
+  it('undefined and absent columns are skipped without error', () => {
+    expect(slimRow({ x: 1 }, [undefined, 'y'])).toEqual({});
   });
 });

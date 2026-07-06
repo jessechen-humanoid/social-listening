@@ -3,6 +3,11 @@ import { describe, expect, it, vi } from 'vitest';
 const runDeepTaskMock = vi.hoisted(() => vi.fn());
 vi.mock('../deep-pipeline/orchestrator', () => ({ runDeepTask: runDeepTaskMock }));
 
+// The pre-start cancellation check hits the DB; this test has no DB — no task
+// here is flagged, so the check resolving to zero rows is the correct stub.
+const queryMock = vi.hoisted(() => vi.fn(async () => ({ rows: [] })));
+vi.mock('../db', () => ({ query: queryMock }));
+
 import { runBatch } from '../deep-pipeline/batch-runner';
 
 // Spec "Batch tasks execute concurrently".

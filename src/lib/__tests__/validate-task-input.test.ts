@@ -5,14 +5,14 @@ import { MAX_TOTAL_ROWS, validateTaskInput } from '../validate-task-input';
 describe('validateTaskInput', () => {
   const rows = (n: number) => Array.from({ length: n }, () => ({}));
 
-  it('accepts a deep task with valid roles and 59999 rows', () => {
+  it('accepts a deep task with valid roles and 99999 rows', () => {
     const result = validateTaskInput({
       mode: 'deep',
       config: {},
       files: [
-        { role: 'hotpost', data: rows(29999) },
-        { role: 'hotcomment', data: rows(15000) },
-        { role: 'comments_from_posts', data: rows(15000) },
+        { role: 'hotpost', data: rows(49999) },
+        { role: 'hotcomment', data: rows(25000) },
+        { role: 'comments_from_posts', data: rows(25000) },
       ],
     });
     expect(result).toEqual({ ok: true, mode: 'deep' });

@@ -1,7 +1,7 @@
 import { query } from './db';
 import { callJson, isContentLevelFailure, parseScore } from './deep-pipeline/openai-client';
 import { exceedsErrorThreshold } from './error-threshold';
-import { claimTask, createHeartbeat } from './task-claim';
+import { claimTask, createHeartbeat, TaskCancelledError } from './task-claim';
 import { mapConcurrent } from './semaphore';
 
 const ROW_CONCURRENCY = 10;
@@ -138,6 +138,8 @@ export async function processTask(taskId: string) {
             lastError = null;
             break;
           } catch (err) {
+            // Cancellation is not a retryable row failure.
+            if (err instanceof TaskCancelledError) throw err;
             lastError = err instanceof Error ? err : new Error(String(err));
             if (attempt < 2) {
               await sleep(Math.pow(2, attempt) * 1000);
@@ -156,7 +158,8 @@ export async function processTask(taskId: string) {
             [taskId]
           );
         }
-      } catch {
+      } catch (err) {
+        if (err instanceof TaskCancelledError) throw err;
         // Continue processing remaining items even if one fails catastrophically
       }
     });
@@ -174,7 +177,17 @@ export async function processTask(taskId: string) {
       `UPDATE tasks SET status = $2, updated_at = NOW() WHERE task_id = $1`,
       [taskId, finalStatus]
     );
-  } catch {
+  } catch (err) {
+    if (err instanceof TaskCancelledError) {
+      // Terminal cancelled state: scored rows are kept as-is
+      // (spec "Cooperative task cancellation").
+      await query(
+        "UPDATE tasks SET status = 'cancelled', updated_at = NOW() WHERE task_id = $1",
+        [taskId]
+      );
+      console.log(`Task ${taskId} cancelled by user request`);
+      return;
+    }
     await query(
       "UPDATE tasks SET status = 'error', updated_at = NOW() WHERE task_id = $1",
       [taskId]

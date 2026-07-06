@@ -6,6 +6,7 @@ import FileUpload from '@/components/FileUpload';
 import AnalysisConfigPanel from '@/components/AnalysisConfig';
 import { getBrowserUuid } from '@/lib/browser-uuid';
 import { apiFetch } from '@/lib/api-client';
+import { slimRow } from '@/lib/column-mapping';
 import { useUploadDraft } from '@/lib/upload-draft-context';
 import type { AnalysisConfig } from '@/lib/types';
 
@@ -59,7 +60,9 @@ export default function LightFlow() {
           contentColumn: f.contentColumn,
           engagementColumn: f.engagementColumn || null,
           columnMapping: { content: f.contentColumn, engagement: f.engagementColumn || null },
-          data: f.data,
+          // Only the selected columns travel (spec "Upload payload carries
+          // only mapped columns").
+          data: f.data.map(row => slimRow(row, [f.contentColumn, f.engagementColumn || undefined])),
         })),
       };
 

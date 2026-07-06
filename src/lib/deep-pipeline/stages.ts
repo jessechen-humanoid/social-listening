@@ -1,4 +1,5 @@
 import { batchUpdate, query } from '../db';
+import { TaskCancelledError } from '../task-claim';
 import type { PromptVersion } from '../prompt-versions';
 import { DEEP_STAGES, type DeepStageName } from '../seed-prompts';
 import { callJson, fillPlaceholders, isContentLevelFailure, parseScore, parseBoolFlag } from './openai-client';
@@ -69,6 +70,8 @@ export async function runStageARelatedFilter(ctx: StageContext): Promise<StageOu
       );
       outputCount++;
     } catch (err) {
+      // Cancellation must reach the runner, not become a row failure.
+      if (err instanceof TaskCancelledError) throw err;
       const msg = err instanceof Error ? err.message : String(err);
       // Content refusals become 'unscorable' (excluded, not a system failure).
       const status = isContentLevelFailure(err) ? 'unscorable' : 'error';
@@ -136,6 +139,8 @@ export async function runStageAEmotionFavor(ctx: StageContext): Promise<StageOut
       );
       outputCount++;
     } catch (err) {
+      // Cancellation must reach the runner, not become a row failure.
+      if (err instanceof TaskCancelledError) throw err;
       const msg = err instanceof Error ? err.message : String(err);
       // Content refusals become 'unscorable' (excluded, not a system failure).
       const status = isContentLevelFailure(err) ? 'unscorable' : 'error';
@@ -272,6 +277,8 @@ export async function runStageBTagFriendFilter(ctx: StageContext): Promise<Stage
       );
       if (!filteredOut) kept++;
     } catch (err) {
+      // Cancellation must reach the runner, not become a row failure.
+      if (err instanceof TaskCancelledError) throw err;
       const msg = err instanceof Error ? err.message : String(err);
       // Content refusals become 'unscorable' (excluded, not a system failure).
       const status = isContentLevelFailure(err) ? 'unscorable' : 'error';
@@ -348,7 +355,7 @@ export async function runStageBEmotionFavor(ctx: StageContext): Promise<StageOut
   let outputCount = 0;
   await mapConcurrent(batches, ROW_CONCURRENCY, async (batch) => {
     await ctx.heartbeat?.();
-    const ok = await scoreCommentBatch(prompt, ctx.brandName, batch);
+    const ok = await scoreCommentBatch(prompt, ctx.brandName, batch, ctx.heartbeat);
     outputCount += ok;
   });
 
@@ -358,7 +365,8 @@ export async function runStageBEmotionFavor(ctx: StageContext): Promise<StageOut
 async function scoreCommentBatch(
   prompt: PromptVersion,
   brand: string,
-  batch: CommentBatchRow[]
+  batch: CommentBatchRow[],
+  heartbeat?: () => Promise<void>
 ): Promise<number> {
   if (batch.length === 0) return 0;
 
@@ -398,6 +406,9 @@ async function scoreCommentBatch(
         message_bundle: `「${r.content_text || ''}」`,
       });
       try {
+        // Cancellation checkpoint: without this, a downgraded 25-comment
+        // group would issue 25 more calls after a cancel is requested.
+        await heartbeat?.();
         const result = await callJson<{ result?: Array<Record<string, unknown>> }>({
           prompt,
           userMessage: single,
@@ -408,6 +419,7 @@ async function scoreCommentBatch(
           favor: parseScore((entry as Record<string, unknown>)?.['好感分數']),
         });
       } catch (err) {
+        if (err instanceof TaskCancelledError) throw err;
         scores.push({
           emotion: null,
           favor: null,
@@ -529,6 +541,8 @@ export async function runStageCEmotionFavor(ctx: StageContext): Promise<StageOut
       );
       outputCount++;
     } catch (err) {
+      // Cancellation must reach the runner, not become a row failure.
+      if (err instanceof TaskCancelledError) throw err;
       const msg = err instanceof Error ? err.message : String(err);
       // Content refusals become 'unscorable' (excluded, not a system failure).
       const status = isContentLevelFailure(err) ? 'unscorable' : 'error';

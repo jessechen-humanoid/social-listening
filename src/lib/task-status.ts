@@ -20,3 +20,16 @@ export const TASK_RESULT_STATUSES = [
 ] as const;
 
 export type TaskResultStatus = (typeof TASK_RESULT_STATUSES)[number];
+
+// Task-level status set. 'cancelled' is a terminal state (spec "Cooperative
+// task cancellation"): scored rows are kept, aggregation and ledger sync are
+// skipped, and recovery never resumes a cancelled task.
+export const TASK_STATUSES = [
+  'pending',
+  'processing',
+  'completed',
+  'error',
+  'cancelled',
+] as const;
+
+export type TaskStatus = (typeof TASK_STATUSES)[number];

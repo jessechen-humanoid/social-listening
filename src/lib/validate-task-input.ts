@@ -5,7 +5,7 @@ import { SUPPORTED_PLATFORMS, type Platform } from './platforms';
 // Sized for real quarterly Qsearch exports: a single FB comment file has been
 // observed at 26,786 rows, and three FB files JSON-serialized exceed 20MB.
 export const MAX_BODY_BYTES = 100 * 1024 * 1024; // 100MB
-export const MAX_TOTAL_ROWS = 60000;
+export const MAX_TOTAL_ROWS = 100000;
 
 export type TaskInputValidation =
   | { ok: true; mode: 'light' | 'deep' }

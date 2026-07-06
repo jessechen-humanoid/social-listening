@@ -14,6 +14,7 @@ export default function HistoryView() {
   const [history, setHistory] = useState<TaskProgress[]>([]);
   const [loadError, setLoadError] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [actionError, setActionError] = useState('');
 
   useEffect(() => {
     const id = setTimeout(() => setBrowserUuid(getBrowserUuid()), 0);
@@ -52,6 +53,21 @@ export default function HistoryView() {
     return () => clearInterval(id);
   }, [history, fetchHistory]);
 
+  // Spec "Task and batch cancellation controls": flag the task(s); the
+  // running loop stops within the heartbeat window.
+  const cancelTasks = async (taskIds: string[]) => {
+    setActionError('');
+    const results = await Promise.allSettled(
+      taskIds.map(id => apiFetch(`/api/tasks/${id}/cancel`, { method: 'POST' }))
+    );
+    if (results.some(r => r.status === 'rejected')) {
+      setActionError('部分任務取消失敗，請重試');
+    }
+    fetchHistory();
+  };
+
+  const CANCELLABLE = new Set(['pending', 'processing']);
+
   if (loadError) {
     return (
       <div className="rounded-xl p-6 text-center" style={{ backgroundColor: 'var(--color-card)', border: '1px solid var(--color-line)' }}>
@@ -69,6 +85,11 @@ export default function HistoryView() {
 
   return (
     <div className="space-y-3">
+      {actionError && (
+        <p className="text-xs rounded-lg p-3" style={{ color: 'var(--color-danger)', backgroundColor: '#fef0f0' }}>
+          {actionError}
+        </p>
+      )}
       {loaded && history.length === 0 && (
         <p className="text-sm text-center py-12" style={{ color: 'var(--color-muted)' }}>
           尚無分析紀錄
@@ -139,19 +160,35 @@ export default function HistoryView() {
                         style={{
                           backgroundColor:
                             t.status === 'completed' ? '#e8f0e8'
-                            : t.status === 'error' ? '#fef0f0' : '#fef9ef',
+                            : t.status === 'error' ? '#fef0f0'
+                            : t.status === 'cancelled' ? 'var(--color-line-soft)' : '#fef9ef',
                           color:
                             t.status === 'completed' ? '#2d5a2d'
-                            : t.status === 'error' ? 'var(--color-danger)' : '#8a6d3b',
+                            : t.status === 'error' ? 'var(--color-danger)'
+                            : t.status === 'cancelled' ? 'var(--color-muted)' : '#8a6d3b',
                         }}
                       >
                         {(t.platform ?? '').toUpperCase()}{' '}
                         {t.status === 'completed' ? '✓'
                           : t.status === 'error' ? '✗'
+                          : t.status === 'cancelled' ? '已取消'
                           : t.status === 'processing' ? `${pctDone}%` : '等待中'}
                       </span>
                     );
                   })}
+                  {entry.tasks.some(t => CANCELLABLE.has(t.status)) && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!window.confirm('確定要取消這個批次還在進行中的任務嗎？已完成的平台不受影響。')) return;
+                        cancelTasks(entry.tasks.filter(t => CANCELLABLE.has(t.status)).map(t => t.task_id));
+                      }}
+                      className="text-xs px-2 py-1 rounded-lg transition"
+                      style={{ color: 'var(--color-danger)' }}
+                    >
+                      取消
+                    </button>
+                  )}
                 </div>
               </div>
             );
@@ -186,15 +223,18 @@ export default function HistoryView() {
                           style={{
                             backgroundColor:
                               task.status === 'completed' ? '#e8f0e8'
-                              : task.status === 'error' ? '#fef0f0' : '#fef9ef',
+                              : task.status === 'error' ? '#fef0f0'
+                              : task.status === 'cancelled' ? 'var(--color-line-soft)' : '#fef9ef',
                             color:
                               task.status === 'completed' ? '#2d5a2d'
-                              : task.status === 'error' ? 'var(--color-danger)' : '#8a6d3b',
+                              : task.status === 'error' ? 'var(--color-danger)'
+                              : task.status === 'cancelled' ? 'var(--color-muted)' : '#8a6d3b',
                           }}
                         >
                           {(dc?.platform ?? '').toUpperCase()}{' '}
                           {task.status === 'completed' ? '✓'
                             : task.status === 'error' ? '✗'
+                            : task.status === 'cancelled' ? '已取消'
                             : task.status === 'processing' ? `${pctDone}%` : '等待中'}
                         </span>
                       </>
@@ -215,11 +255,18 @@ export default function HistoryView() {
                   <span
                     className="text-xs px-2 py-1 rounded-lg"
                     style={{
-                      backgroundColor: task.status === 'completed' ? '#e8f0e8' : task.status === 'processing' ? '#fef9ef' : '#fef0f0',
-                      color: task.status === 'completed' ? '#2d5a2d' : task.status === 'processing' ? '#8a6d3b' : 'var(--color-danger)',
+                      backgroundColor: task.status === 'completed' ? '#e8f0e8'
+                        : task.status === 'cancelled' ? 'var(--color-line-soft)'
+                        : task.status === 'processing' ? '#fef9ef' : '#fef0f0',
+                      color: task.status === 'completed' ? '#2d5a2d'
+                        : task.status === 'cancelled' ? 'var(--color-muted)'
+                        : task.status === 'processing' ? '#8a6d3b' : 'var(--color-danger)',
                     }}
                   >
-                    {task.status === 'completed' ? '已完成' : task.status === 'processing' ? '進行中' : task.status === 'error' ? '錯誤' : '等待中'}
+                    {task.status === 'completed' ? '已完成'
+                      : task.status === 'cancelled' ? '已取消'
+                      : task.status === 'processing' ? '進行中'
+                      : task.status === 'error' ? '錯誤' : '等待中'}
                   </span>
                   )}
                   <span className="text-xs" style={{ color: 'var(--color-faint)' }}>
@@ -242,6 +289,19 @@ export default function HistoryView() {
                       style={{ color: 'var(--color-ink)', backgroundColor: '#f5f5f3' }}
                     >
                       複製設定
+                    </button>
+                  )}
+                  {CANCELLABLE.has(task.status) && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (!window.confirm('確定要取消這個任務嗎？已評分的部分會保留。')) return;
+                        cancelTasks([task.task_id]);
+                      }}
+                      className="text-xs px-2 py-1 rounded-lg transition"
+                      style={{ color: 'var(--color-danger)' }}
+                    >
+                      取消
                     </button>
                   )}
                   <button

@@ -4,6 +4,20 @@ import type { Platform } from './platforms';
 
 export type FileRole = 'hotpost' | 'hotcomment' | 'comments_from_posts';
 
+// Keep only the mapped columns of a row (spec "Upload payload carries only
+// mapped columns"): upload payloads must not carry unmapped source columns —
+// a 100k-row batch of wide Qsearch exports would otherwise crest the body cap.
+export function slimRow(
+  row: Record<string, unknown>,
+  columns: Iterable<string | undefined>
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const col of columns) {
+    if (col && col in row) out[col] = row[col];
+  }
+  return out;
+}
+
 // Display labels for file roles — single source for every upload/mapping UI.
 export const ROLE_LABELS: Record<FileRole, string> = {
   hotpost: 'Hotpost（熱門貼文）',
