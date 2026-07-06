@@ -173,6 +173,23 @@ function drawTimeline(
   ctx.fillText('負向（好感 < 5）', margin.left + 148, legendY);
 }
 
+// 1600×900 off-screen render returned as dataURL — shared by download and
+// the batch zip (charts in the zip are never screen-captured).
+export function renderWeeklyTimelinePNG(
+  buckets: WeeklyBucket[],
+  positiveColor: string,
+  negativeColor: string,
+  title: string
+): string | null {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1600;
+  canvas.height = 900;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  drawTimeline(ctx, 1600, 900, buckets, positiveColor, negativeColor, title);
+  return canvas.toDataURL('image/png');
+}
+
 // Render a 1600x900 PNG (per spec) and trigger a download.
 export function exportWeeklyTimelinePNG(
   buckets: WeeklyBucket[],

@@ -72,7 +72,6 @@ async function runMigrations() {
       id UUID PRIMARY KEY,
       name TEXT UNIQUE NOT NULL,
       platform_settings JSONB NOT NULL DEFAULT '{
-        "scatter_alpha": {"fb": 0.4, "ig": 0.4, "threads": 0.4, "dcard": 0.4},
         "timeline_colors": {"positive": "#3B82F6", "negative": "#EF4444"}
       }'::jsonb,
       calibration_set_id UUID,
@@ -80,17 +79,17 @@ async function runMigrations() {
     )
   `);
   await query(`CREATE INDEX IF NOT EXISTS idx_brands_name ON brands(name)`);
-  // One-time (idempotent) re-default: brands still on the original dense-alpha
-  // defaults never configured them intentionally — move them to the readable
-  // defaults (spec "Deep scatter default styling"). Custom values untouched.
+  // Idempotent cleanup (spec "Platform transparency configurable per brand"):
+  // a scatter_alpha equal to any historical SYSTEM-seeded default set was
+  // never an intentional override — remove the key so the density-adaptive
+  // default applies. Hand-tuned custom values are untouched.
   await query(`
     UPDATE brands
-    SET platform_settings = jsonb_set(
-      platform_settings, '{scatter_alpha}',
-      '{"fb": 0.4, "ig": 0.4, "threads": 0.4, "dcard": 0.4}'::jsonb
-    )
+    SET platform_settings = platform_settings - 'scatter_alpha'
     WHERE platform_settings->'scatter_alpha'
-          = '{"fb": 0.08, "ig": 0.12, "threads": 0.02, "dcard": 0.18}'::jsonb
+          IN ('{"fb": 0.08, "ig": 0.12, "threads": 0.02, "dcard": 0.18}'::jsonb,
+              '{"fb": 0.4, "ig": 0.4, "threads": 0.4, "dcard": 0.4}'::jsonb,
+              '{"fb": 0.01, "ig": 0.02, "threads": 0.1, "dcard": 0.06}'::jsonb)
   `);
 
   await query(`

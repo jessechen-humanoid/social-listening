@@ -20,9 +20,10 @@ function gaussianRandom(rng: () => number): number {
   return Math.sqrt(-2 * Math.log(u1 || 0.0001)) * Math.cos(2 * Math.PI * u2);
 }
 
-// Spec "Gaussian jitter on data points": σ = 0.12, hard clamp ±0.4.
-export const JITTER_SIGMA = 0.12;
-export const JITTER_CLAMP = 0.4;
+// Spec "Gaussian jitter on data points": σ = 0.3, matching the legacy
+// Python renderer (np.random.normal(0, 0.3), no per-axis cap) — the value
+// that turns integer-score columns into the familiar cloud.
+export const JITTER_SIGMA = 0.3;
 
 export function applyJitter(
   x: number,
@@ -31,15 +32,11 @@ export function applyJitter(
 ): { jx: number; jy: number } {
   const rng = mulberry32(rowIndex * 73856093 + 19349663);
 
-  let dx = gaussianRandom(rng) * JITTER_SIGMA;
-  let dy = gaussianRandom(rng) * JITTER_SIGMA;
+  const dx = gaussianRandom(rng) * JITTER_SIGMA;
+  const dy = gaussianRandom(rng) * JITTER_SIGMA;
 
-  // Hard clamp
-  dx = Math.max(-JITTER_CLAMP, Math.min(JITTER_CLAMP, dx));
-  dy = Math.max(-JITTER_CLAMP, Math.min(JITTER_CLAMP, dy));
-
-  // Clamp back into the score domain (spec "Gaussian jitter on data points"):
-  // a 10.0 score must not paint outside the chart at 10.4.
+  // No per-axis cap (Python parity: natural Gaussian tails shape the cloud),
+  // but never paint outside the score domain.
   return {
     jx: Math.max(0, Math.min(10, x + dx)),
     jy: Math.max(0, Math.min(10, y + dy)),

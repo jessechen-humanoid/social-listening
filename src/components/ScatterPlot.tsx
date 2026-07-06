@@ -30,13 +30,22 @@ interface DeepResultFields {
   platform?: string | null;
 }
 
-// Default alpha tuned for regular volumes (Python parity: c='b', ~0.4).
-// High-volume brands lower these via platform_settings.scatter_alpha.
-// Module constant: an inline default object would be a new reference every
-// render and permanently invalidate the draw useCallback below.
-const DEFAULT_PLATFORM_ALPHA: Record<string, number> = {
-  fb: 0.4, ig: 0.4, threads: 0.4, dcard: 0.4,
-};
+// Density-adaptive opacity via ink conservation (spec "Deep scatter default
+// styling"): the legacy Python workflow hand-tuned alpha per quarter to keep
+// the fog-like density constant; this formula automates that. Calibrated so
+// the legacy Q1 Threads chart (6,225 points at alpha 0.1) reproduces exactly.
+export const TARGET_INK_PX2 = 41537; // 60% of the legacy Q1 anchor — lighter register per acceptance
+export const ADAPTIVE_ALPHA_MIN = 0.008;
+export const ADAPTIVE_ALPHA_MAX = 0.4;
+
+export function adaptiveAlpha(radiiOn1000px: number[]): number {
+  const ink = radiiOn1000px.reduce((sum, r) => sum + r * r, 0);
+  if (ink <= 0) return ADAPTIVE_ALPHA_MAX;
+  return Math.min(ADAPTIVE_ALPHA_MAX, Math.max(ADAPTIVE_ALPHA_MIN, TARGET_INK_PX2 / ink));
+}
+
+// Stable empty default: no brand override → adaptive for every platform.
+const NO_PLATFORM_OVERRIDES: Record<string, number> = {};
 
 export function computeQuadrantCounts(points: { x: number; y: number }[]) {
   const counts = [0, 0, 0, 0]; // UL, UR, LL, LR
@@ -85,13 +94,28 @@ export interface ScatterPoint {
   alpha: number;
 }
 
+// Python area-equivalent sizing (spec "Engagement-based point sizing"):
+// matplotlib used s = (sqrt(e) + 0.1) × 100 pt² on a 100-dpi figure, i.e.
+// radius_px = sqrt(s/π) × 100/72 ≈ 7.84 × sqrt(sqrt(e) + 0.1) at 1000px width.
+// Absolute scale — a given engagement renders the same size in every chart.
+// Visual only: statistical weights stay sqrt(e+1) (附錄 D), deliberately
+// decoupled from point size.
+export const SIZE_COEF_1000PX = Math.sqrt(100 / Math.PI) * (100 / 72);
+// Cap keeps high-engagement/low-count charts (e.g. IG brand posts) from being
+// dominated by oversized circles (acceptance feedback 2026-07-06).
+export const MAX_POINT_RADIUS_1000PX = 45;
+
+export function pointRadius(engagement: number, canvasWidth: number): number {
+  const uncapped = SIZE_COEF_1000PX * Math.sqrt(Math.sqrt(Math.max(0, engagement)) + 0.1);
+  return Math.min(MAX_POINT_RADIUS_1000PX, uncapped) * (canvasWidth / 1000);
+}
+
 interface BuildPointsOptions {
   weighted: boolean;
   conditionFilterEnabled: boolean;
   conditionText: string;
   platformAlpha: Record<string, number>;
-  baseRadius: number;
-  radiusScale: number; // multiplied by 1/sqrt(maxEngagement)
+  canvasWidth: number; // sizing reference (1000 = export scale)
 }
 
 export function filterScatterResults(
@@ -118,23 +142,23 @@ export function buildScatterPoints(
   filteredResults: TaskResult[],
   opts: BuildPointsOptions
 ): ScatterPoint[] {
-  const maxEngagement = Math.max(
-    ...filteredResults.map(r => r.engagement_value || 0),
-    1
+  // Adaptive default is computed from the 1000px-reference radii of ALL
+  // plotted points (ink conservation is a whole-chart property).
+  const autoAlpha = adaptiveAlpha(
+    filteredResults.map(r => pointRadius(r.engagement_value || 0, 1000))
   );
-  const scaleFactor = opts.radiusScale / Math.sqrt(maxEngagement);
-
   return filteredResults.map(r => {
     const d = r as TaskResult & DeepResultFields;
     const xRaw = opts.weighted ? d.favor_calibrated ?? r.x_score! : r.x_score!;
     const yRaw = opts.weighted ? d.emotion_calibrated ?? r.y_score! : r.y_score!;
     const { jx, jy } = applyJitter(Number(xRaw), Number(yRaw), r.row_index);
     const eng = r.engagement_value || 0;
-    // Radius via the shared weight function (sqrt(e+1)) so chart sizing and
-    // aggregate weighting can never drift apart.
-    const radius = opts.baseRadius + (engagementWeight(eng) - 1) * scaleFactor;
-    const alpha = opts.weighted && d.platform
-      ? opts.platformAlpha[d.platform] ?? 0.1
+    const radius = pointRadius(eng, opts.canvasWidth);
+    // A platform key present in the brand settings is an intentional fixed
+    // override; an absent key means density-adaptive (spec "Platform
+    // transparency configurable per brand").
+    const alpha = opts.weighted
+      ? (d.platform !== null && d.platform !== undefined ? opts.platformAlpha[d.platform] : undefined) ?? autoAlpha
       : 0.35;
     return { x: jx, y: jy, rawX: Number(xRaw), rawY: Number(yRaw), radius, engagement: eng, alpha };
   });
@@ -214,6 +238,18 @@ export function drawScatter(ctx: CanvasRenderingContext2D, opts: DrawScatterOpti
   ctx.stroke();
   ctx.setLineDash([]);
 
+  // Data points
+  for (const p of points) {
+    ctx.beginPath();
+    ctx.arc(scaleX(p.x), scaleY(p.y), p.radius, 0, Math.PI * 2);
+    ctx.fillStyle = opts.dotColor;
+    ctx.globalAlpha = p.alpha;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // Text layers render ABOVE the data points (spec "Chart text renders
+  // above data points"): capped giant bubbles must never obscure labels.
   // Axis tick labels
   ctx.fillStyle = opts.textColor;
   ctx.font = `${sizes.tickFont}px Arial, sans-serif`;
@@ -258,15 +294,6 @@ export function drawScatter(ctx: CanvasRenderingContext2D, opts: DrawScatterOpti
     ctx.globalAlpha = 1;
   }
 
-  // Data points
-  for (const p of points) {
-    ctx.beginPath();
-    ctx.arc(scaleX(p.x), scaleY(p.y), p.radius, 0, Math.PI * 2);
-    ctx.fillStyle = opts.dotColor;
-    ctx.globalAlpha = p.alpha;
-    ctx.fill();
-    ctx.globalAlpha = 1;
-  }
 
   // Centroid — from unjittered scores (spec "Quadrant statistics computed
   // from unjittered scores").
@@ -290,8 +317,13 @@ export function drawScatter(ctx: CanvasRenderingContext2D, opts: DrawScatterOpti
 
     ctx.fillStyle = CHART_COLORS.danger;
     ctx.font = `${sizes.centroidFont}px Arial, sans-serif`;
-    ctx.textAlign = 'left';
-    ctx.fillText(`(${cx}, ${cy})`, sx + sizes.centroidLabelDx, sy + sizes.centroidLabelDy);
+    // Flip the label to the left of the cross when it would spill past the
+    // plot's right edge (spec "Chart text renders above data points" — the
+    // label must stay fully visible for right-leaning centroids).
+    const label = `(${cx}, ${cy})`;
+    const spills = sx + sizes.centroidLabelDx + ctx.measureText(label).width > width - margin.right;
+    ctx.textAlign = spills ? 'right' : 'left';
+    ctx.fillText(label, spills ? sx - sizes.centroidLabelDx : sx + sizes.centroidLabelDx, sy + sizes.centroidLabelDy);
   }
 }
 
@@ -335,9 +367,6 @@ const EXPORT_SIZES: DrawSizes = {
   quadrantBottomDy: 122,
 };
 
-const SCREEN_RADIUS = { baseRadius: 4, radiusScale: 12 };
-const EXPORT_RADIUS = { baseRadius: 5, radiusScale: 15 };
-
 export default function ScatterPlot({
   results,
   xAxisName,
@@ -347,7 +376,7 @@ export default function ScatterPlot({
   dotColor = '#404040',
   exportMode = false,
   weighted = false,
-  platformAlpha = DEFAULT_PLATFORM_ALPHA,
+  platformAlpha = NO_PLATFORM_OVERRIDES,
 }: ScatterPlotProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -359,7 +388,7 @@ export default function ScatterPlot({
   const draw = useCallback((ctx: CanvasRenderingContext2D, width: number, height: number) => {
     const points = buildScatterPoints(filteredResults, {
       weighted, conditionFilterEnabled, conditionText, platformAlpha,
-      ...SCREEN_RADIUS,
+      canvasWidth: width,
     });
     drawScatter(ctx, {
       width,
@@ -427,30 +456,32 @@ export default function ScatterPlot({
 
 // 1000×1000 presentation PNG (spec "Scatter plot PNG export") rendered by the
 // SAME drawScatter routine as the on-screen chart, with export sizes.
-export function exportScatterPlotPNG(
+// Returns a dataURL — shared by the single-task download button and the
+// batch zip (spec "Batch results page with unified download": zipped charts
+// are rendered off-screen at export dimensions, never screen-captured).
+export function renderScatterPNG(
   results: TaskResult[],
   xAxisName: string,
   yAxisName: string,
   conditionFilterEnabled: boolean,
   conditionText: string,
   dotColor: string = '#404040',
-  projectName: string = '',
   mode: 'brand' | 'custom' = 'brand',
   weighted: boolean = false,
-  platformAlpha: Record<string, number> = DEFAULT_PLATFORM_ALPHA,
-) {
+  platformAlpha: Record<string, number> = NO_PLATFORM_OVERRIDES,
+): string | null {
   const width = 1000;
   const height = 1000;
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext('2d');
-  if (!ctx) return;
+  if (!ctx) return null;
 
   const filtered = filterScatterResults(results, { weighted, conditionFilterEnabled, conditionText });
   const points = buildScatterPoints(filtered, {
     weighted, conditionFilterEnabled, conditionText, platformAlpha,
-    ...EXPORT_RADIUS,
+    canvasWidth: width,
   });
 
   drawScatter(ctx, {
@@ -468,8 +499,25 @@ export function exportScatterPlotPNG(
     quadrantLabels: { mode },
   });
 
+  return canvas.toDataURL('image/png');
+}
+
+export function exportScatterPlotPNG(
+  results: TaskResult[],
+  xAxisName: string,
+  yAxisName: string,
+  conditionFilterEnabled: boolean,
+  conditionText: string,
+  dotColor: string = '#404040',
+  projectName: string = '',
+  mode: 'brand' | 'custom' = 'brand',
+  weighted: boolean = false,
+  platformAlpha: Record<string, number> = NO_PLATFORM_OVERRIDES,
+) {
+  const url = renderScatterPNG(results, xAxisName, yAxisName, conditionFilterEnabled, conditionText, dotColor, mode, weighted, platformAlpha);
+  if (!url) return;
   const link = document.createElement('a');
   link.download = projectName ? `${sanitizeFilename(projectName)}_輿情分析散佈圖.png` : '輿情分析散佈圖.png';
-  link.href = canvas.toDataURL('image/png');
+  link.href = url;
   link.click();
 }

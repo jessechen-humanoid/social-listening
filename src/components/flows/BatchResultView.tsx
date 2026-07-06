@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import JSZip from 'jszip';
-import ScatterPlot from '@/components/ScatterPlot';
-import WeeklyTimeline from '@/components/WeeklyTimeline';
+import ScatterPlot, { renderScatterPNG } from '@/components/ScatterPlot';
+import WeeklyTimeline, { renderWeeklyTimelinePNG } from '@/components/WeeklyTimeline';
 import { apiFetch } from '@/lib/api-client';
 import { sanitizeFilename } from '@/lib/sanitize-export';
 import type { DeepAnalysisConfig, TaskProgress, TaskResult } from '@/lib/types';
@@ -82,16 +82,21 @@ export default function BatchResultView({ batchId }: { batchId: string }) {
       const zip = new JSZip();
       for (const item of items) {
         const dir = item.platform.toUpperCase();
-        const section = document.querySelector(`div[data-batch-platform="${item.platform}"]`);
-        for (const [tag, name] of [
-          ['scatter', 'scatter.png'],
-          ['timeline', 'weekly-timeline.png'],
-        ] as const) {
-          const canvas = section?.querySelector<HTMLCanvasElement>(`canvas[data-chart="${tag}"]`);
-          if (canvas) {
-            zip.file(`${dir}/${name}`, canvas.toDataURL('image/png').split(',')[1], { base64: true });
-          }
-        }
+        // Off-screen renders at export dimensions (spec "Batch results page
+        // with unified download"): the on-screen canvases follow the browser
+        // window's shape and must never be captured into the zip.
+        const alpha = item.progress.platform_settings?.scatter_alpha ?? {};
+        const scatterUrl = renderScatterPNG(
+          item.results, '品牌好感度', '情緒強度', false, '',
+          '#0000FF', 'brand', true, alpha
+        );
+        if (scatterUrl) zip.file(`${dir}/scatter.png`, scatterUrl.split(',')[1], { base64: true });
+        const agg = item.progress.aggregates?.[0];
+        const timelineUrl = renderWeeklyTimelinePNG(
+          agg?.weekly_buckets ?? [], '#3B82F6', '#EF4444',
+          `逐週聲量（${PLATFORM_DISPLAY[item.platform] ?? item.platform}）`
+        );
+        if (timelineUrl) zip.file(`${dir}/weekly-timeline.png`, timelineUrl.split(',')[1], { base64: true });
         const xlsxRes = await fetch(`/api/tasks/${item.taskId}/export-xlsx`);
         if (xlsxRes.ok) {
           zip.file(`${dir}/report.xlsx`, await xlsxRes.blob());
