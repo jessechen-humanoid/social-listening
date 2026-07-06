@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# 終驗/測試暫存資料（客戶資料絕不進版控）
+public/testdata/
+public/realdata/
+public/*.csv
